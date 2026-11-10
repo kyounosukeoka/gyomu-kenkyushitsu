@@ -74,3 +74,18 @@ button,input,textarea,select{font:inherit}button{cursor:pointer}button:disabled{
 .pwa-connect-pill.offline:before{background:#d4a071}
 button[hidden]{display:none!important}
 @media(max-width:430px){.pwa-connect-pill{font-size:10px;padding:5px 6px}.brand p{display:none}}
+
+
+/* Ver.1.4.3: Lock the visual viewport without introducing horizontal scrolling.
+   iOS Safari zooms inputs smaller than 16px even with viewport maximum-scale=1.
+   The previous generic 16px rule was overridden by `.field input` (higher specificity).
+   Keep buttons' original sizes so the bottom nav and toolbar stay compact. */
+html,body{width:100%;max-width:100%;overflow-x:hidden;touch-action:pan-x pan-y}
+@supports (overflow:clip){html,body{overflow-x:clip}}
+.main{width:100%;min-width:0}
+@media(max-width:780px){
+  .topbar-inner,.bottom-nav,#app{max-width:100%;min-width:0}
+  .brand,.brand>div:last-child{min-width:0}
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+  select,textarea{font-size:16px!important}
+}

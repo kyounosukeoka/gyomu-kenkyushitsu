@@ -1,5 +1,17 @@
 /* 業務研究室 — no third-party scripts, no external API calls. All data is stored in this browser. */
 'use strict';
+// iPhone/iPad Safari: prevent accidental pinch-zoom while preserving one-finger
+// scrolling, taps, focusing inputs, and native text selection.
+// A user's system Accessibility Zoom feature is not affected.
+const isIOSDevice = /iPhone|iPad|iPod/.test(navigator.userAgent) ||
+  (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+if (isIOSDevice) {
+  document.addEventListener('gesturestart', event => event.preventDefault(), {passive:false});
+  document.addEventListener('gesturechange', event => event.preventDefault(), {passive:false});
+  document.addEventListener('touchmove', event => {
+    if (event.touches.length > 1 && event.cancelable) event.preventDefault();
+  }, {passive:false});
+}
 const DB_NAME='gyomu-research-local-v1';
 const STORAGE_KEY='gyomu-research-fallback-v1';
 const RATING_FIELDS=[['initiative','主体性'],['observation','観察力'],['planning','準備・段取り'],['communication','コミュニケーション'],['learning','学習・改善']];
@@ -45,7 +57,7 @@ let data=newState();
 let db=null,storeMethod='pending',saveQueue=Promise.resolve(),saveTimer=null;
 let ui={page:'home',day:today(),activeGroup:'all',activeGoal:null,todoView:'tree',calendarMonth:today().slice(0,7),calendarSelected:today(),researchType:'all',researchQuery:'',collapsed:new Set(),execFilter:'ready',reflectionPeriod:'week',commuteView:'check',commuteDay:today(),commuteChecked:new Set(),modal:null};
 let pendingToast=null;
-const APP_VERSION='1.4.1';
+const APP_VERSION='1.4.3';
 let pwa={registration:null,ready:false,updateAvailable:false,error:'',updating:false};
 const isInstalledApp=()=>window.matchMedia('(display-mode: standalone)').matches || navigator.standalone===true;
 function showPwaInfo(){

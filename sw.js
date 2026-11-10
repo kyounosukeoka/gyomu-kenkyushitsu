@@ -1,8 +1,8 @@
-/* 業務研究室 v1.4.1 — 同じアプリの静的ファイルのみをオフライン保存。記録データは扱わない。 */
+/* 業務研究室 v1.4.3 — 同じアプリの静的ファイルのみをオフライン保存。記録データは扱わない。 */
 const APP_CACHE_PREFIX = 'gyomu-research-app-';
-const APP_CACHE = APP_CACHE_PREFIX + 'v1.4.1';
+const APP_CACHE = APP_CACHE_PREFIX + 'v1.4.3';
 const CORE = [
-  './', './index.html', './styles.css?v=1.4.1', './app.js?v=1.4.1',
+  './', './index.html', './styles.css?v=1.4.3', './app.js?v=1.4.3',
   './manifest.webmanifest', './icon.svg', './icon-192.png',
   './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'
 ];
