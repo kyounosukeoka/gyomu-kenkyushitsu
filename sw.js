@@ -1,8 +1,8 @@
-/* 業務研究室 v1.4 — 同じアプリの静的ファイルのみをオフライン保存。記録データは扱わない。 */
+/* 業務研究室 v1.4.1 — 同じアプリの静的ファイルのみをオフライン保存。記録データは扱わない。 */
 const APP_CACHE_PREFIX = 'gyomu-research-app-';
-const APP_CACHE = APP_CACHE_PREFIX + 'v1.4.0';
+const APP_CACHE = APP_CACHE_PREFIX + 'v1.4.1';
 const CORE = [
-  './', './index.html', './styles.css?v=1.4', './app.js?v=1.4',
+  './', './index.html', './styles.css?v=1.4.1', './app.js?v=1.4.1',
   './manifest.webmanifest', './icon.svg', './icon-192.png',
   './icon-512.png', './icon-maskable-512.png', './apple-touch-icon.png'
 ];
@@ -19,8 +19,8 @@ self.addEventListener('activate', event => {
     await Promise.all(names
       .filter(name => name.startsWith(APP_CACHE_PREFIX) && name !== APP_CACHE)
       .map(name => caches.delete(name)));
-    // v1.3 used this single named cache; don't delete unrelated apps' caches.
-    await caches.delete('business-research-v1-3');
+    // v1.3's generic legacy cache is deliberately left untouched: it might be shared
+    // by a different project under the same github.io origin.
     await self.clients.claim();
   })());
 });

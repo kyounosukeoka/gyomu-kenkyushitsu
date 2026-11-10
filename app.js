@@ -45,7 +45,7 @@ let data=newState();
 let db=null,storeMethod='pending',saveQueue=Promise.resolve(),saveTimer=null;
 let ui={page:'home',day:today(),activeGroup:'all',activeGoal:null,todoView:'tree',calendarMonth:today().slice(0,7),calendarSelected:today(),researchType:'all',researchQuery:'',collapsed:new Set(),execFilter:'ready',reflectionPeriod:'week',commuteView:'check',commuteDay:today(),commuteChecked:new Set(),modal:null};
 let pendingToast=null;
-const APP_VERSION='1.4.0';
+const APP_VERSION='1.4.1';
 let pwa={registration:null,ready:false,updateAvailable:false,error:'',updating:false};
 const isInstalledApp=()=>window.matchMedia('(display-mode: standalone)').matches || navigator.standalone===true;
 function showPwaInfo(){
@@ -324,7 +324,7 @@ case 'note': {const n=data.notes.find(x=>x.id===m.id);title=n?'研究メモを�
 case 'prompt': {title='AIに渡す文章を作成';body=`<p class="help-copy">コピーするだけでは送信されません。会社の機密情報が含まれていないことを必ず確認してください。</p><div class="field-row">${selectField('文章の用途','promptType',[['daily','業務報告'],['review','期間の振り返り'],['failure','失敗の原因分析'],['improve','改善案の検討']],m.promptType||'daily')}${selectField('対象範囲','promptPeriod',[['day','選択中の1日'],['week','今週'],['month','今月'],['30days','直近30日']],m.promptPeriod||(m.promptType==='review'?'week':'day'))}</div><div class="notice-bar mt15">${icon('shield','icon-mini')}<span><b>注意：</b>匿名加工はメールアドレスや電話番号など一部のパターンのみです。固有名詞・取引条件・社内事情などは自動判定できません。必ず本文を見直してください。</span></div>
 <div class="check-row"><input type="checkbox" id="prompt-mask" checked><label for="prompt-mask">メールアドレス・URL・電話番号の候補を伏せる（補助機能）</label></div><div class="field"><label for="prompt-text">生成された文章（この欄で編集できます）</label><textarea class="prompter" id="prompt-text" spellcheck="false"></textarea></div><div class="check-row"><input type="checkbox" id="prompt-safety"><label for="prompt-safety">勤務先の規程に照らし、機密情報・個人情報がないことを確認しました。</label></div>`;footer=`<div class="right"><button class="outline-btn" data-action="refresh-prompt">文章を再生成</button><button class="primary-btn" data-action="copy-prompt" id="copy-prompt-btn" disabled>${icon('copy','icon-mini')} 確認してコピー</button></div>`;break}
 case 'backup': {title='暗号化バックアップ';body=`<form id="modal-form" data-form="backup" class="field-group"><p class="help-copy">パスワードは12文字以上にしてください。復元時に必要です。端末内の保存データ自体は暗号化されません。</p>${inputField('暗号化パスワード','password','',{type:'password',required:true})}${inputField('パスワード（確認）','passwordAgain','',{type:'password',required:true})}<div class="notice-bar">${icon('shield','icon-mini')}<span>バックアップ形式：PBKDF2-SHA-256（250,000回）＋AES-256-GCM。パスワードを忘れると復元できません。</span></div></form>`;footer=footerButtons('','バックアップを保存');break}
-case 'restore':{title='バックアップを復元';body=`<form id="modal-form" data-form="restore" class="field-group"><p class="help-copy">復元すると、このブラウザの現在の記録はすべて置き換わります。先に現在のバックアップを保存することをおすすめします。</p><div class="field"><label for="restore-file">暗号化バックアップ（.brlab）</label><input id="restore-file" name="file" type="file" accept=".brlab,application/json" required></div>${inputField('バックアップのパスワード','password','',{type:'password',required:true})}</form>`;footer=footerButtons('','内容を復元する');break}
+case 'restore':{title='バックアップを復元';body=`<form id="modal-form" data-form="restore" class="field-group"><p class="help-copy">復元すると、この端末の現在の記録はすべて置き換わります。先に現在のバックアップを保存することをおすすめします。</p><div class="field"><label for="restore-file">暗号化バックアップ（.brlab）</label><input id="restore-file" name="file" type="file" required><p class="help-copy" id="restore-file-help">iPhoneでは「ファイルを選択」から「ファイル」アプリを開き、保存した .brlab を選んでください。ファイル形式による選択制限をなくしています。内容は復元前に検証します。</p><p class="help-copy" id="restore-file-selected" role="status" aria-live="polite"></p></div>${inputField('バックアップのパスワード','password','',{type:'password',required:true})}</form>`;footer=footerButtons('','内容を復元する');break}
 }
 $('#modal-root').innerHTML=modalMarkup(title,body,footer);
 if(m.type==='prompt')refreshPrompt();
@@ -351,6 +351,17 @@ function toB64(arr){let result='';const batch=0x8000;for(let i=0;i<arr.length;i+
 function fromB64(s){const str=atob(s),out=new Uint8Array(str.length);for(let i=0;i<str.length;i++)out[i]=str.charCodeAt(i);return out}
 async function backupEncrypt(pass){if(!crypto.subtle)throw new Error('暗号化機能に対応していません。HTTPSまたはlocalhostで開いてください。');const salt=crypto.getRandomValues(new Uint8Array(16)),iv=crypto.getRandomValues(new Uint8Array(12)),enc=new TextEncoder();const material=await crypto.subtle.importKey('raw',enc.encode(pass),'PBKDF2',false,['deriveKey']);const key=await crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt,iterations:250000},material,{name:'AES-GCM',length:256},false,['encrypt']);const plain=enc.encode(JSON.stringify(data));const encrypted=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,plain);return JSON.stringify({format:'gyomu-research-encrypted-backup',version:1,kdf:'PBKDF2-SHA256',iterations:250000,cipher:'AES-256-GCM',salt:toB64(salt),iv:toB64(iv),payload:toB64(new Uint8Array(encrypted))})}
 async function backupDecrypt(raw,pass){if(!crypto.subtle)throw new Error('復元機能を利用できません。HTTPSまたはlocalhostで開いてください。');const json=JSON.parse(raw);if(json.format!=='gyomu-research-encrypted-backup'||json.version!==1||json.iterations!==250000||json.cipher!=='AES-256-GCM')throw new Error('対応していないバックアップ形式です。');const salt=fromB64(json.salt),iv=fromB64(json.iv),payload=fromB64(json.payload);if(salt.length!==16||iv.length!==12)throw new Error('バックアップ形式が正しくありません。');const material=await crypto.subtle.importKey('raw',new TextEncoder().encode(pass),'PBKDF2',false,['deriveKey']);const key=await crypto.subtle.deriveKey({name:'PBKDF2',hash:'SHA-256',salt,iterations:250000},material,{name:'AES-GCM',length:256},false,['decrypt']);const clear=await crypto.subtle.decrypt({name:'AES-GCM',iv},key,payload);const parsed=JSON.parse(new TextDecoder().decode(clear));if(!validateState(parsed))throw new Error('バックアップの内容を確認できませんでした。');return parsed}
+// The iOS Files picker may label .brlab as an unknown type. Do not filter by MIME/extension.
+// Verify the encrypted backup header and authentication tag before accepting its contents.
+function readBackupFile(file){
+ if(typeof file.text==='function')return file.text();
+ return new Promise((resolve,reject)=>{
+  const reader=new FileReader();
+  reader.onload=()=>resolve(String(reader.result||''));
+  reader.onerror=()=>reject(reader.error||new Error('ファイルを読み込めませんでした'));
+  reader.readAsText(file,'UTF-8');
+ });
+}
 function downloadFile(content,filename){const url=URL.createObjectURL(new Blob([content],{type:'application/octet-stream'}));const a=document.createElement('a');a.href=url;a.download=filename;document.body.append(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(url),3000)}
 function duplicateGoal(id){const original=goalById(id);if(!original)return;const clone={...original,id:uid(),title:original.title+'（複製）',createdAt:isoNow(),archivedAt:null,dueDate:''};data.goals.push(clone);const olds=goalTasks(id),map={};olds.forEach(t=>map[t.id]=uid());olds.forEach(t=>{data.tasks.push({...t,id:map[t.id],goalId:clone.id,parentId:t.parentId?map[t.parentId]:null,status:'todo',completedAt:null,plannedDate:'',dueDate:'',createdAt:isoNow()})});ui.activeGroup=clone.groupId||'all';ui.activeGoal=clone.id;ui.todoView='tree';persist();render();toast('達成済みの手順を新しい目標に複製しました')}
 function saveForm(form){const m=ui.modal,v=Object.fromEntries(new FormData(form).entries());const trim=k=>String(v[k]||'').trim();let id=m?.id;
@@ -363,7 +374,26 @@ if(m.type==='contact'){if(!trim('name')||!trim('phone')){toast('名前と電話�
 if(m.type==='note'){if(!trim('title')){toast('タイトルを入力してください');return}let n=id?data.notes.find(x=>x.id===id):null;if(!n){n={id:uid(),createdAt:isoNow()};data.notes.push(n)}for(const k of ['kind','date','title','details','action','cause','result','nextStep','status','tags'])n[k]=trim(k);n.updatedAt=isoNow()}
 hideModal();persist();render();toast('保存しました')}
 async function submitForm(form){const type=ui.modal?.type;if(type==='backup'){const pw=form.elements.password.value,again=form.elements.passwordAgain.value;if(pw.length<12){toast('パスワードは12文字以上にしてください');return}if(pw!==again){toast('確認用パスワードが一致しません');return}try{const file=await backupEncrypt(pw);downloadFile(file,`業務研究室-暗号化バックアップ-${today()}.brlab`);hideModal();toast('暗号化バックアップを保存しました')}catch(e){console.error(e);toast('バックアップに失敗しました：'+e.message)}return}
-if(type==='restore'){const file=form.elements.file.files?.[0],pass=form.elements.password.value;if(!file){toast('バックアップファイルを選択してください');return}if(file.size>15*1024*1024){toast('15MB以下のファイルを選択してください');return}try{const recovered=await backupDecrypt(await file.text(),pass);if(!confirm(`バックアップの目標 ${recovered.goals.length}件、研究メモ ${recovered.notes.length}件を読み込み、現在のデータをすべて置き換えます。よろしいですか？`))return;data=recovered;ensureCommuteState();ui.commuteChecked.clear();ui.activeGoal=null;ui.activeGroup='all';ui.day=today();await persist();hideModal();render();toast('復元しました')}catch(e){console.error(e);toast('復元できませんでした。パスワードやファイルを確認してください。')}return}
+if(type==='restore'){
+ const file=form.elements.file.files?.[0],pass=form.elements.password.value;
+ if(!file){toast('バックアップファイルを選択してください');return}
+ if(file.size>15*1024*1024){toast('15MB以下のファイルを選択してください');return}
+ try{
+  const raw=await readBackupFile(file);
+  let header;
+  try{header=JSON.parse(raw)}catch(_){throw new Error('業務研究室の暗号化バックアップファイルを選んでください。')}
+  if(header?.format!=='gyomu-research-encrypted-backup')throw new Error('業務研究室の暗号化バックアップファイルを選んでください。');
+  let recovered;
+  try{recovered=await backupDecrypt(raw,pass)}catch(e){
+   if(e?.name==='OperationError')throw new Error('パスワードが異なるか、バックアップが破損しています。');
+   throw e;
+  }
+  if(!confirm(`バックアップの目標 ${recovered.goals.length}件、研究メモ ${recovered.notes.length}件を読み込み、現在のデータをすべて置き換えます。よろしいですか？`))return;
+  data=recovered;ensureCommuteState();ui.commuteChecked.clear();ui.activeGoal=null;ui.activeGroup='all';ui.day=today();
+  await persist();hideModal();render();toast('復元しました');
+ }catch(e){console.error(e);toast('復元できませんでした：'+(e.message||'ファイルやパスワードをご確認ください。'))}
+ return
+}
 saveForm(form)}
 document.addEventListener('submit',e=>{
  if(e.target.id==='commute-form'){
@@ -447,6 +477,11 @@ document.addEventListener('input',e=>{const el=e.target;
  if(el.id==='prompt-mask'){refreshPrompt();return}
 });
 document.addEventListener('change',e=>{const el=e.target;
+ if(el.id==='restore-file'){
+  const label=$('#restore-file-selected');
+  if(label)label.textContent=el.files?.[0]?'選択中：'+el.files[0].name:'ファイルが選択されていません';
+  return;
+ }
  if(el.dataset.change==='commute-date'){if(isDate(el.value)){ui.commuteDay=el.value;render()}else toast('日付が正しくありません');return}
  if(el.dataset.change==='exec-filter'){ui.execFilter=el.value;render();return}
  if(el.dataset.change==='note-filter'){ui.researchType=el.value;render();return}
