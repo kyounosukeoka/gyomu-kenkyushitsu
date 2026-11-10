@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#172936" />
+  <meta name="description" content="今日の経験を、明日の力に。業務記録・研究ノート・TODOツリー・振り返りを一つにまとめたローカルファーストアプリ。" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data: blob:; script-src 'self'; style-src 'self'; img-src 'self' data: blob:; connect-src 'none'; font-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'" />
+  <link rel="icon" href="./icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="apple-mobile-web-app-title" content="業務研究室" />
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="stylesheet" href="./styles.css?v=1.4" />
+  <title>業務研究室 | 今日の経験を、明日の力に。</title>
+</head>
+<body>
+  <svg class="svg-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+    <symbol id="i-home" viewBox="0 0 24 24"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z"/></symbol>
+    <symbol id="i-book" viewBox="0 0 24 24"><path d="M12 6C8 4 4.5 4 2 5v14c4-1 7-1 10 1 3-2 6-2 10-1V5c-2.5-1-6-1-10 1zM12 6v14"/></symbol>
+    <symbol id="i-note" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="20" rx="2"/><path d="M8 7h8M8 11h8M8 15h6M2 6h3M2 12h3M2 18h3"/></symbol>
+    <symbol id="i-tree" viewBox="0 0 24 24"><circle cx="12" cy="4" r="3"/><circle cx="5" cy="19" r="3"/><circle cx="19" cy="19" r="3"/><path d="M12 7v6M5 16v-3h14v3M12 13v-3"/></symbol>
+    <symbol id="i-chart" viewBox="0 0 24 24"><path d="M3 21h18M5 18v-7h4v7M11 18V5h4v13M17 18V9h4v9"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M10 2h4l.8 2.4 2.2 1 2.3-1 2.7 2.8-1 2.2 1 2.2v3l-2.3.8-1 2.2 1 2.2-2.8 2.7-2.2-1-2.2 1L14 22h-4l-.8-2.4-2.2-1-2.3 1L2 16.8l1-2.2-1-2.2v-1l1-2.2-1-2.2 2.8-2.7 2.2 1 2.2-1z"/></symbol>
+    <symbol id="i-check" viewBox="0 0 24 24"><path d="m4 12 5 5L20 6"/></symbol>
+    <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></symbol>
+    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 4v16M4 12h16"/></symbol>
+    <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m9 5 7 7-7 7"/></symbol>
+    <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 2v6M17 2v6M3 10h18"/></symbol>
+    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M2 6h8l2 3h10v11H2z"/></symbol>
+    <symbol id="i-pen" viewBox="0 0 24 24"><path d="m4 20 5-1 11-11-4-4L5 15zM14 6l4 4"/></symbol>
+    <symbol id="i-shield" viewBox="0 0 24 24"><path d="m12 2 9 4v6c0 6-4 9-9 10-5-1-9-4-9-10V6zM8 12l3 3 5-6"/></symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10" cy="10" r="7"/><path d="m15 15 6 6"/></symbol>
+    <symbol id="i-train" viewBox="0 0 24 24"><rect x="5" y="2" width="14" height="17" rx="4"/><path d="M8 22l2-3m6 0 2 3M5 11h14M8 15h1m6 0h1M9 5h6"/></symbol>
+    <symbol id="i-phone" viewBox="0 0 24 24"><path d="M4.5 3h4L10 8l-2 2c1 3 3 5 6 6l2-2 5 1.5v4c-8.5 4-20-7.5-16.5-16.5z"/></symbol>
+    <symbol id="i-briefcase" viewBox="0 0 24 24"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M8 7V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v3M2 13h20"/></symbol>
+    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h3"/></symbol>
+  </svg>
+
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand"><div class="brand-mark"><svg class="icon"><use href="#i-book"/></svg></div><div><h1>業務研究室</h1><p>今日の経験を、明日の力に。</p></div></div>
+      <div class="header-actions"><span class="pwa-connect-pill" id="pwa-connect-pill" role="status" aria-live="polite">接続確認中</span><button class="icon-button" data-action="navigate" data-page="commute" aria-label="通勤記録を開く" title="通勤記録"><svg class="icon"><use href="#i-train"/></svg></button><button class="header-settings icon-button" data-action="navigate" data-page="settings" aria-label="設定を開く"><svg class="icon"><use href="#i-settings"/></svg></button></div>
+    </div>
+  </header>
+
+  <main id="app" class="main" aria-live="polite"><div class="loading">手帳を開いています…</div></main>
+
+  <nav class="bottom-nav" aria-label="主要メニュー">
+    <button data-action="navigate" data-page="home" class="nav-link active"><svg class="icon"><use href="#i-home"/></svg><span>ホーム</span></button>
+    <button data-action="navigate" data-page="daily" class="nav-link"><svg class="icon"><use href="#i-note"/></svg><span>業務記録</span></button>
+    <button data-action="navigate" data-page="todos" class="nav-link"><svg class="icon"><use href="#i-tree"/></svg><span>TODOツリー</span></button>
+    <button data-action="navigate" data-page="research" class="nav-link"><svg class="icon"><use href="#i-book"/></svg><span>研究ノート</span></button>
+    <button data-action="navigate" data-page="reflection" class="nav-link"><svg class="icon"><use href="#i-chart"/></svg><span>振り返り</span></button>
+  </nav>
+
+  <div id="modal-root"></div><div id="toast" role="status" aria-live="polite"></div>
+  <script src="./app.js?v=1.4" defer></script>
+</body>
+</html>

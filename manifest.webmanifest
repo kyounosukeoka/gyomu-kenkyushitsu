@@ -1,0 +1,32 @@
+{
+  "id": "./",
+  "name": "業務研究室 — 今日の経験を、明日の力に。",
+  "short_name": "業務研究室",
+  "description": "業務記録・TODOツリー・研究ノート・振り返り・通勤記録を、端末内に保存する研究手帳",
+  "lang": "ja",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f6f0e5",
+  "theme_color": "#172936",
+  "icons": [
+    {
+      "src": "./icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}
