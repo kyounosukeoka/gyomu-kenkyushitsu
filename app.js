@@ -42,7 +42,7 @@ const dueTag=(s,label='完了予定')=>s&&isDate(s)?`<span class="date-chip">${i
 function goalFinishedAt(id){const leaves=goalTasks(id).filter(isLeaf);if(!leaves.length||!leaves.every(t=>t.status==='done'&&t.completedAt))return null;return leaves.map(t=>t.completedAt).sort().at(-1)}
 
 const isoNow=()=>new Date().toISOString();
-const defaultDay=()=>({summary:'',achievements:'',challenges:'',notices:'',tomorrow:'',praise:'',ratings:{},updatedAt:null});
+const defaultDay=()=>({clockIn:'',clockOut:'',summary:'',achievements:'',challenges:'',notices:'',tomorrow:'',praise:'',ratings:{},updatedAt:null});
 const newState=()=>({version:1,groups:[],goals:[],tasks:[],days:{},notes:[],commute:{equipment:[],contacts:[],entries:{}},createdAt:isoNow()});
 function ensureCommuteState(){
  if(!data.commute||typeof data.commute!=='object')data.commute={};
@@ -54,9 +54,9 @@ function ensureCommuteState(){
 
 let data=newState();
 let db=null,storeMethod='pending',saveQueue=Promise.resolve(),saveTimer=null;
-let ui={page:'home',day:today(),activeGroup:'all',activeGoal:null,todoView:'tree',calendarMonth:today().slice(0,7),calendarSelected:today(),researchType:'all',researchQuery:'',collapsed:new Set(),execFilter:'ready',reflectionPeriod:'week',commuteView:'check',commuteDay:today(),commuteChecked:new Set(),modal:null};
+let ui={page:'home',day:today(),activeGroup:'all',activeGoal:null,todoView:'tree',calendarMonth:today().slice(0,7),calendarSelected:today(),attendanceMonth:today().slice(0,7),researchType:'all',researchQuery:'',collapsed:new Set(),execFilter:'ready',reflectionPeriod:'week',commuteView:'check',commuteDay:today(),commuteChecked:new Set(),modal:null};
 let pendingToast=null;
-const APP_VERSION='1.4.5';
+const APP_VERSION='1.4.6';
 let pwa={registration:null,ready:false,updateAvailable:false,error:'',updating:false};
 const isInstalledApp=()=>window.matchMedia('(display-mode: standalone)').matches || navigator.standalone===true;
 function showPwaInfo(){
@@ -180,6 +180,10 @@ ${dayStrip(today())}
 <div class="notice-bar">${icon('shield','icon-mini')}<span>記録はこの端末のブラウザ内に保存されます。重要な記録は設定から暗号化バックアップしてください。外部AIへのコピー時には機密情報を確認しましょう。</span></div></div></div>`}
 function renderDaily(){const d=dayData(ui.day),prev=dayData(stepDay(ui.day,-1));const doneToday=data.tasks.filter(t=>t.completedAt&&dstr(new Date(t.completedAt))===ui.day&&isLeaf(t));return `${header('一日の業務記録','仕事の事実、気づき、次の一歩を記録します。','DAILY LOG',`<button class="outline-btn small-btn" data-action="open-prompt" data-type="daily">${icon('copy','icon-mini')} AI用文章</button>`)}${dayStrip(ui.day)}
 <div class="grid2"><div class="stack"><section class="card"><div class="soft-head">${icon('note','icon-mini')} 今日の出来事 <span class="save-status" id="autosave-label">入力内容は自動保存されます</span></div><div class="form-section daily-form">
+<div class="work-time-row" role="group" aria-label="出勤・退勤時刻">
+ <div class="field"><label for="daily-clock-in">出勤時間</label><input type="time" id="daily-clock-in" data-daily="clockIn" value="${h(d.clockIn||'')}" aria-label="出勤時間" autocomplete="off"></div>
+ <div class="field"><label for="daily-clock-out">退勤時間</label><input type="time" id="daily-clock-out" data-daily="clockOut" value="${h(d.clockOut||'')}" aria-label="退勤時間" autocomplete="off"></div>
+</div>
 <div class="field"><label for="daily-summary">今日取り組んだ業務</label><textarea id="daily-summary" data-daily="summary" placeholder="取り組んだ業務を、箇条書きでも構いません。">${h(d.summary)}</textarea></div>
 <div class="field"><label for="daily-achievements">今日達成したこと・成功体験</label><textarea id="daily-achievements" data-daily="achievements" placeholder="うまくできたこと、進歩したことを書きます。">${h(d.achievements)}</textarea></div>
 <div class="field"><label for="daily-challenges">課題・失敗体験・未完了事項</label><textarea id="daily-challenges" data-daily="challenges" placeholder="困ったことや、次回に活かしたいこと。">${h(d.challenges)}</textarea></div>
@@ -321,11 +325,50 @@ function renderResearch(){let list=data.notes.slice().filter(n=>(ui.researchType
 ${list.length?`<div class="list-grid">${list.map(n=>`<article class="note-item"><div class="note-meta"><span class="tag ${n.kind==='success'?'green':n.kind==='failure'?'red':''}">${h(NOTE_TYPES[n.kind])}</span><span class="tag ${n.status==='closed'?'green':'gray'}">${h(NOTE_STATUS[n.status]||n.status)}</span><span class="minilabel">${niceDay(n.date,false)}</span></div><h3>${h(n.title)}</h3><p>${h([n.details,n.action].filter(Boolean).join(' ／ ').slice(0,180))}${[n.details,n.action].join(' ').length>180?'…':''}</p><div class="note-footer"><small class="minilabel">${n.tags?h(n.tags):'記録を振り返ってみましょう'}</small><button class="outline-btn small-btn" data-action="edit-note" data-id="${h(n.id)}">${icon('pen','icon-mini')} 開いて編集</button></div></article>`).join('')}</div>`:empty('book','記録が見つかりません','気づき・成功・失敗・判断を、短いメモから残しましょう。',`<button class="outline-btn small-btn" data-action="new-note">最初のメモを作る</button>`)}`}
 function dateRange(period){const end= parseDay(today());let start=new Date(end);if(period==='week'){const shift=(end.getDay()+6)%7;start.setDate(end.getDate()-shift)}else if(period==='month'){start=new Date(end.getFullYear(),end.getMonth(),1,12)}else start.setDate(end.getDate()-29);return {start:dstr(start),end:dstr(end)}}
 function periodData(period){const {start,end}=dateRange(period);const entries=Object.entries(data.days).filter(([d,v])=>d>=start&&d<=end&&hasDayRecord(v)).sort(([a],[b])=>a.localeCompare(b));const notes=data.notes.filter(n=>n.date>=start&&n.date<=end),tasks=data.tasks.filter(t=>t.completedAt&&dstr(new Date(t.completedAt))>=start&&dstr(new Date(t.completedAt))<=end&&isLeaf(t));return {entries,notes,tasks,start,end}}
-function hasDayRecord(d){return d&&(['summary','achievements','challenges','notices','tomorrow','praise'].some(k=>String(d[k]||'').trim())||Object.values(d.ratings||{}).some(v=>v))}
+function hasDayRecord(d){return d&&(['clockIn','clockOut','summary','achievements','challenges','notices','tomorrow','praise'].some(k=>String(d[k]||'').trim())||Object.values(d.ratings||{}).some(v=>v))}
+
+/* Monthly attendance calendar: reads the existing daily log records, never mutates them. */
+function renderAttendanceCalendar(){
+ const [year,month]=ui.attendanceMonth.split('-').map(Number);
+ const monthStart=new Date(year,month-1,1,12);
+ const daysInMonth=new Date(year,month,0,12).getDate();
+ const firstWeekday=monthStart.getDay();
+ const totalCells=Math.ceil((firstWeekday+daysInMonth)/7)*7;
+ const weekdayLabels='日月火水木金土'.split('');
+ const cells=Array.from({length:totalCells},(_,position)=>{
+  const day=position-firstWeekday+1;
+  if(day<1||day>daysInMonth)return '<div class="attendance-empty" aria-hidden="true"></div>';
+  const date=`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+  const record=data.days[date]||{};
+  const inTime=/^([01]\d|2[0-3]):[0-5]\d$/.test(record.clockIn||'')?record.clockIn:'';
+  const outTime=/^([01]\d|2[0-3]):[0-5]\d$/.test(record.clockOut||'')?record.clockOut:'';
+  const isToday=date===today();
+  const hasTime=!!(inTime||outTime);
+  const weekday=position%7;
+  const label=`${niceDay(date)}、出勤${inTime||'未入力'}、退勤${outTime||'未入力'}。業務記録を開く`;
+  return `<button type="button" class="attendance-day ${isToday?'is-today':''} ${hasTime?'has-time':''} ${weekday===0?'sunday':weekday===6?'saturday':''}" data-action="attendance-jump" data-day="${date}" aria-label="${h(label)}">
+    <span class="attendance-time attendance-in ${inTime?'':'not-set'}"><span class="attendance-prefix">出</span><time>${h(inTime||'—')}</time></span>
+    <strong class="attendance-date">${day}</strong>
+    <span class="attendance-time attendance-out ${outTime?'':'not-set'}"><span class="attendance-prefix">退</span><time>${h(outTime||'—')}</time></span>
+  </button>`;
+ }).join('');
+ return `<section class="card attendance-card mt20" aria-label="勤務時刻カレンダー">
+  <div class="soft-head attendance-head"><span>${icon('calendar','icon-mini')} 勤務時刻カレンダー</span>
+   <div class="attendance-controls"><button type="button" class="pale-button" data-action="attendance-step" data-step="-1" aria-label="前の月">‹</button><strong>${year}年${month}月</strong><button type="button" class="pale-button" data-action="attendance-step" data-step="1" aria-label="次の月">›</button><button type="button" class="outline-btn small-btn" data-action="attendance-today">今月</button></div>
+  </div>
+  <div class="attendance-body"><p class="help-copy">各日付の上段が出勤、下段が退勤です。日付をタップするとその日の「今日の出来事」を編集できます。</p>
+   <div class="attendance-weekdays">${weekdayLabels.map(x=>`<span>${x}</span>`).join('')}</div>
+   <div class="attendance-grid">${cells}</div>
+   <div class="attendance-legend"><span><b>出</b> 出勤時間</span><span><b>退</b> 退勤時間</span><span>— は未入力</span></div>
+  </div>
+ </section>`;
+}
+
 function renderReflection(){const p=periodData(ui.reflectionPeriod);const ratings=RATING_FIELDS.map(([key,label])=>{const vals=p.entries.map(([,v])=>v.ratings?.[key]).filter(x=>Number.isInteger(x)&&x>=1&&x<=5);return {key,label,mean:vals.length?(vals.reduce((a,b)=>a+b,0)/vals.length):0,count:vals.length}});
 return `${header('振り返りと成長','数を競うのではなく、次の行動を見つけるための記録です。','REFLECTION',`<button class="primary-btn small-btn" data-action="open-prompt" data-type="review">${icon('copy','icon-mini')} AI用の振り返り文章</button>`)}
 <div class="tabs"><button class="tab ${ui.reflectionPeriod==='week'?'active':''}" data-action="period" data-period="week">今週</button><button class="tab ${ui.reflectionPeriod==='month'?'active':''}" data-action="period" data-period="month">今月</button><button class="tab ${ui.reflectionPeriod==='30days'?'active':''}" data-action="period" data-period="30days">直近30日</button></div><p class="muted">対象期間：${niceDay(p.start,false)} 〜 ${niceDay(p.end,false)}</p>
 <div class="grid3 mt15"><div class="metric"><b>${p.entries.length}</b><small>記録した日数</small></div><div class="metric"><b>${p.notes.length}</b><small>研究メモ</small></div><div class="metric"><b>${p.tasks.length}</b><small>完了した末端TODO</small></div></div>
+${renderAttendanceCalendar()}
 <div class="grid2 mt20"><section class="card"><div class="soft-head">${icon('chart','icon-mini')} 自己評価の平均（5点満点）</div><div class="panel-body"><div class="chart-list">${ratings.map(r=>`<div class="chart-line"><span>${h(r.label)}</span><div class="progress-bar"><span class="progress-fill" style="width:${r.mean*20}%"></span></div><strong>${r.count?r.mean.toFixed(1):'—'}</strong></div>`).join('')}</div><div class="tip mt15">記録のなかった項目は平均に含めません。数字は成長のヒントとして利用しましょう。</div></div></section>
 <section class="card"><div class="soft-head">${icon('calendar','icon-mini')} 一日ごとの評価</div><div class="panel-body">${p.entries.filter(([,d])=>Object.values(d.ratings||{}).some(Boolean)).length?`<div class="chart-list">${p.entries.filter(([,d])=>Object.values(d.ratings||{}).some(Boolean)).slice().reverse().slice(0,12).map(([date,day])=>{const vals=Object.values(day.ratings||{}).filter(x=>Number.isInteger(x)&&x>0);const mean=vals.reduce((a,b)=>a+b,0)/vals.length;return `<div class="daily-avg"><time>${niceDay(date,false)}</time><div class="progress-bar"><span class="progress-fill" style="width:${mean*20}%"></span></div><strong>${mean.toFixed(1)}</strong></div>`}).join('')}</div>`:`<div class="empty-note">業務記録の「自己評価」を入力すると、ここに表示されます。</div>`}</div></section></div>
 <section class="card mt20"><div class="soft-head">${icon('book','icon-mini')} この期間の主な記録</div><div class="panel-body">${p.notes.length?p.notes.slice().reverse().slice(0,8).map(n=>`<div class="daily-todo"><span class="tag">${h(NOTE_TYPES[n.kind])}</span><button class="text-btn" style="flex:1;text-align:left" data-action="edit-note" data-id="${h(n.id)}">${h(n.title)}</button><small>${shortDate(n.date)}</small></div>`).join(''):`<div class="empty-note">この期間の研究ノートはまだありません。</div>`}</div></section>
@@ -483,6 +526,9 @@ document.addEventListener('click',async e=>{
  if(action==='calendar-today'){ui.calendarMonth=today().slice(0,7);ui.calendarSelected=today();render();return}
  if(action==='calendar-day'){ui.calendarSelected=el.dataset.day;render();return}
  if(action==='calendar-jump'){ui.calendarSelected=el.dataset.day;ui.calendarMonth=ui.calendarSelected.slice(0,7);render();return}
+ if(action==='attendance-step'){const [y,m]=ui.attendanceMonth.split('-').map(Number);ui.attendanceMonth=dstr(new Date(y,m-1+Number(el.dataset.step),1,12)).slice(0,7);render();return}
+ if(action==='attendance-today'){ui.attendanceMonth=today().slice(0,7);render();return}
+ if(action==='attendance-jump'){if(isDate(el.dataset.day)){ui.day=el.dataset.day;changePage('daily')}return}
  if(action==='period'){ui.reflectionPeriod=el.dataset.period;render();return}
  if(action==='toggle-task'){const t=taskById(id);if(t)setTaskDone(id,t.status!=='done');return}
  if(action==='plan-task'){const t=taskById(id);if(t){t.plannedDate=t.plannedDate===today()?'':today();persist();render();toast(t.plannedDate?'今日のTODOに追加しました':'今日のTODOから外しました')}return}
@@ -506,7 +552,7 @@ document.addEventListener('click',async e=>{
  if(action==='clear-data'){const val=prompt('すべてのデータを削除するには「削除」と入力してください。');if(val!=='削除')return;if(!confirm('本当にすべての記録を削除しますか？暗号化バックアップがない場合、復元できません。'))return;data=newState();ui.activeGroup='all';ui.activeGoal=null;ui.day=today();await persist();render();toast('データを初期化しました');return}
 });
 document.addEventListener('input',e=>{const el=e.target;
- if(el.dataset.daily){const d=dayData(ui.day);d[el.dataset.daily]=el.value;d.updatedAt=isoNow();scheduleSave();const status=$('#autosave-label');if(status){status.textContent='保存中…';clearTimeout(status._timer);status._timer=setTimeout(()=>{status.textContent='自動保存しました'},800)}return}
+ if(el.dataset.daily){if((el.dataset.daily==='clockIn'||el.dataset.daily==='clockOut')&&el.value&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(el.value))return;const d=dayData(ui.day);d[el.dataset.daily]=el.value;d.updatedAt=isoNow();scheduleSave();const status=$('#autosave-label');if(status){status.textContent='保存中…';clearTimeout(status._timer);status._timer=setTimeout(()=>{status.textContent='自動保存しました'},800)}return}
  if(el.dataset.search==='research'){ui.researchQuery=el.value;clearTimeout(ui.searchTimer);const pos=el.selectionStart;ui.searchTimer=setTimeout(()=>{render();const input=$('#research-search');if(input){input.focus();input.setSelectionRange(pos,pos)}},250);return}
  if(el.id==='prompt-safety'){const btn=$('#copy-prompt-btn');if(btn)btn.disabled=!el.checked;return}
  if(el.id==='prompt-mask'){refreshPrompt();return}
