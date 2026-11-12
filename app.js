@@ -1,4 +1,4 @@
-/* 業務研究室 — no third-party scripts, no external API calls. All data is stored in this browser. */
+/* 業務研究室 — no third-party scripts. Business records remain on-device; weather requests send coordinates to Open-Meteo only. */
 'use strict';
 // iPhone/iPad Safari: prevent accidental pinch-zoom while preserving one-finger
 // scrolling, taps, focusing inputs, and native text selection.
@@ -43,7 +43,7 @@ function goalFinishedAt(id){const tasks=goalTasks(id);if(!tasks.length||!tasks.e
 
 const isoNow=()=>new Date().toISOString();
 const defaultDay=()=>({clockIn:'',clockOut:'',summary:'',achievements:'',challenges:'',notices:'',tomorrow:'',praise:'',ratings:{},updatedAt:null});
-const newState=()=>({version:1,groups:[],goals:[],tasks:[],days:{},notes:[],commute:{equipment:[],contacts:[],entries:{}},createdAt:isoNow()});
+const newState=()=>({version:1,groups:[],goals:[],tasks:[],days:{},notes:[],commute:{equipment:[],contacts:[],entries:{}},weather:{mode:'manual',places:[],selectedPlaceId:''},createdAt:isoNow()});
 function ensureCommuteState(){
  if(!data.commute||typeof data.commute!=='object')data.commute={};
  if(!Array.isArray(data.commute.equipment))data.commute.equipment=[];
@@ -52,11 +52,22 @@ function ensureCommuteState(){
  return data.commute;
 }
 
+function ensureWeatherState(){
+ if(!data.weather||typeof data.weather!=='object'||Array.isArray(data.weather))data.weather={};
+ const w=data.weather;
+ if(w.mode!=='auto'&&w.mode!=='manual')w.mode='manual';
+ if(!Array.isArray(w.places))w.places=[];
+ w.places=w.places.filter(p=>p&&typeof p.id==='string'&&typeof p.name==='string'&&validCoords(p.lat,p.lon)).slice(0,30);
+ if(typeof w.selectedPlaceId!=='string')w.selectedPlaceId='';
+ if(w.selectedPlaceId&&!w.places.some(p=>p.id===w.selectedPlaceId))w.selectedPlaceId='';
+ return w;
+}
+function validCoords(lat,lon){return Number.isFinite(Number(lat))&&Number.isFinite(Number(lon))&&Math.abs(Number(lat))<=90&&Math.abs(Number(lon))<=180&&lat!==''&&lon!==''&&lat!=null&&lon!=null}
 let data=newState();
 let db=null,storeMethod='pending',saveQueue=Promise.resolve(),saveTimer=null;
 let ui={page:'home',day:today(),activeGroup:'all',activeGoal:null,todoView:'tree',calendarMonth:today().slice(0,7),calendarSelected:today(),attendanceMonth:today().slice(0,7),researchType:'all',researchQuery:'',collapsed:new Set(),execFilter:'all',execScope:'all',calendarScope:'all',reflectionPeriod:'week',commuteView:'check',commuteDay:today(),commuteChecked:new Set(),modal:null};
 let pendingToast=null;
-const APP_VERSION='1.4.9';
+const APP_VERSION='1.5.0';
 let pwa={registration:null,ready:false,updateAvailable:false,error:'',updating:false};
 const isInstalledApp=()=>window.matchMedia('(display-mode: standalone)').matches || navigator.standalone===true;
 function showPwaInfo(){
@@ -116,7 +127,9 @@ async function initialize(){
   try{db=await openDb();const existing=await idbGet('app');storeMethod='IndexedDB';if(validateState(existing))data=existing}
   catch(e){console.warn('IndexedDB unavailable:',e);try{const saved=localStorage.getItem(STORAGE_KEY);if(saved){const existing=JSON.parse(saved);if(validateState(existing))data=existing}localStorage.setItem('__gyomu_test','1');localStorage.removeItem('__gyomu_test');storeMethod='localStorage'}catch(error){storeMethod='memory'}}
   ensureCommuteState();
+  ensureWeatherState();
   render();
+  requestWeatherUpdate();
   if(storeMethod==='memory')toast('この環境では保存できません。別のブラウザ環境で開いてください。');
   setupPwa();
 }
@@ -172,9 +185,129 @@ function taskTreePath(t){
  return parts;
 }
 function render(){try{const root=$('#app');const pages={home:renderHome,daily:renderDaily,todos:renderTodos,commute:renderCommute,research:renderResearch,reflection:renderReflection,settings:renderSettings};root.innerHTML=(pages[ui.page]||pages.home)();document.querySelectorAll('.nav-link').forEach(n=>n.classList.toggle('active',n.dataset.page===ui.page));if(ui.modal)renderModal();showPwaInfo();}catch(error){console.error(error);$('#app').innerHTML=`<div class="error-box">画面の表示中に問題が発生しました。ページを再読み込みしてください。<br>${h(error.message)}</div>`}}
-function changePage(page){flushSave();if(ui.page!==page&&ui.page==='commute'||page==='commute'&&ui.page!==page)ui.commuteChecked.clear();ui.page=page;ui.modal=null;$('#modal-root').innerHTML='';window.scrollTo({top:0,behavior:'instant'});render()}
+function changePage(page){flushSave();if(ui.page!==page&&ui.page==='commute'||page==='commute'&&ui.page!==page)ui.commuteChecked.clear();ui.page=page;ui.modal=null;$('#modal-root').innerHTML='';window.scrollTo({top:0,behavior:'instant'});render();if(page==='home'||page==='daily')requestWeatherUpdate()}
 function header(title,description,kicker='BUSINESS RESEARCH',buttons=''){return `<div class="page-header"><div><div class="eyebrow">${h(kicker)}</div><h2 class="page-title">${h(title)}</h2><p class="page-desc">${h(description)}</p></div>${buttons?`<div class="page-tools">${buttons}</div>`:''}</div>`}
 function dayStrip(date){return `<div class="date-strip"><button data-action="day-step" data-step="-1" aria-label="前日へ">‹</button><strong>${icon('calendar')}${niceDay(date)}</strong><div><button class="date-today" data-action="day-today">今日</button><button data-action="day-step" data-step="1" aria-label="翌日へ">›</button></div></div>`}
+
+// Weather (forecast only): Open-Meteo public non-commercial endpoint. The request
+// contains GPS coordinates, but never transmits daily logs, TODOs, or contact data.
+const WEATHER_CACHE_KEY='gyomu-weather-forecast-v1';
+const WEATHER_TTL_MS=3*60*60*1000;
+let weatherRuntime={forecast:null,key:'',fetchedAt:0,error:'',loading:false,autoCoords:null,autoPositionAt:0,autoLastFetchedCoords:null};
+let weatherCache={};
+try{const saved=JSON.parse(localStorage.getItem(WEATHER_CACHE_KEY)||'{}');if(saved&&typeof saved==='object'&&!Array.isArray(saved))weatherCache=saved}catch(_){/* cache optional */}
+function weatherPlace(){const w=ensureWeatherState();return w.places.find(p=>p.id===w.selectedPlaceId)||null}
+function weatherCacheKey(){const w=ensureWeatherState();return w.mode==='auto'?'auto':w.selectedPlaceId?'place:'+w.selectedPlaceId:''}
+function cachedWeather(key){const c=weatherCache[key];return c&&c.daily&&Array.isArray(c.daily.time)?c:null}
+function putWeatherCache(key,day){
+ weatherCache[key]={daily:day,at:Date.now()};
+ const entries=Object.entries(weatherCache).sort((a,b)=>(b[1]?.at||0)-(a[1]?.at||0)).slice(0,12);
+ weatherCache=Object.fromEntries(entries);
+ try{localStorage.setItem(WEATHER_CACHE_KEY,JSON.stringify(weatherCache))}catch(_){/* in-memory weather still works */}
+}
+function forecastForDate(date){const d=weatherRuntime.forecast?.daily;const i=d?.time?.indexOf(date)??-1;if(i<0)return null;return {
+ code:d.weather_code?.[i],high:d.temperature_2m_max?.[i],low:d.temperature_2m_min?.[i],
+ probability:d.precipitation_probability_max?.[i],snow:d.snowfall_sum?.[i]
+}}
+function weatherCondition(code){
+ const v=Number(code);if(v===0)return ['☀️','快晴'];if(v===1)return ['🌤️','晴れ'];if(v===2)return ['⛅','晴れ時々曇り'];if(v===3)return ['☁️','曇り'];
+ if([45,48].includes(v))return ['🌫️','霧'];if([51,53,55,56,57].includes(v))return ['🌦️','霧雨'];
+ if([61,63,65,66,67,80,81,82].includes(v))return ['🌧️','雨'];
+ if([71,73,75,77,85,86].includes(v))return ['🌨️','雪'];
+ if([95,96,99].includes(v))return ['⛈️','雷雨'];
+ return ['🌤️','天気情報なし'];
+}
+const weatherValue=(x,suffix='',digits=0)=>x==null||!Number.isFinite(Number(x))?'—':`${Number(x).toFixed(digits)}${suffix}`;
+function weatherNotice(){
+ const key=weatherCacheKey(),w=ensureWeatherState();
+ if(w.mode==='manual'&&!weatherPlace())return '「設定」→「天気・位置情報」で地点を登録してください。';
+ if(weatherRuntime.loading)return '天気予報を取得しています…';
+ if(weatherRuntime.error)return weatherRuntime.error;
+ return '予報がありません。オンラインで更新してください。';
+}
+function weatherLastUpdated(){
+ if(!weatherRuntime.fetchedAt)return '';
+ const stamp=new Date(weatherRuntime.fetchedAt);
+ return `取得 ${stamp.toLocaleString('ja-JP',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})}`;
+}
+function weatherLabel(){return ensureWeatherState().mode==='auto'?(navigator.onLine?'現在地':'前回取得地点'):(weatherPlace()?.name||'登録地点なし')}
+function weatherStatus(){
+ if(!weatherRuntime.forecast)return '';
+ const stale=(Date.now()-weatherRuntime.fetchedAt>WEATHER_TTL_MS)||!navigator.onLine;
+ return `${stale?'保存済み予報':'最新の取得分'} · ${weatherLastUpdated()}`;
+}
+function renderWeatherToday(){
+ const w=forecastForDate(today());
+ const note=w?`<div class="weather-today-values"><span class="weather-sky" aria-label="${h(weatherCondition(w.code)[1])}">${weatherCondition(w.code)[0]}</span><div><strong>${h(weatherCondition(w.code)[1])}</strong><small>${h(weatherLabel())}</small></div><div class="weather-temp"><b>最高 ${h(weatherValue(w.high,'℃',1))}</b><b>最低 ${h(weatherValue(w.low,'℃',1))}</b></div><div class="weather-rain"><b>降水確率 ${h(weatherValue(w.probability,'%'))}</b><small>その日の最大値</small></div></div>`:
+ `<p class="weather-unavailable">${h(weatherNotice())}</p>`;
+ return `<section class="weather-panel weather-today" aria-label="今日の天気予報"><div class="weather-panel-head"><span>☀ 今日の天気予報</span><button class="weather-refresh" data-action="weather-refresh" aria-label="天気を更新する">↻ 更新</button></div>${note}<div class="weather-foot"><span>${h(weatherStatus())}</span><span>提供：<a href="https://open-meteo.com/" target="_blank" rel="noopener noreferrer">Open-Meteo</a></span></div></section>`;
+}
+function renderWeatherTomorrow(date){
+ const target=stepDay(date,1),f=forecastForDate(target);
+ const message=ensureWeatherState().mode==='manual'&&!weatherPlace()?'設定で天気の地点を登録すると、予報を表示できます。':weatherNotice();
+ return `<div class="weather-next"><div class="weather-next-title"><strong>❄️ ${h(niceDay(target,false))}の天気・雪の見通し</strong><button class="weather-refresh" data-action="weather-refresh">↻ 更新</button></div>${f?
+ `<div class="weather-next-content"><span class="weather-next-icon" aria-label="${h(weatherCondition(f.code)[1])}">${weatherCondition(f.code)[0]}</span><div><b>${h(weatherCondition(f.code)[1])}</b><small>降水確率（雨・雪） ${h(weatherValue(f.probability,'%'))}</small></div><div class="weather-next-snow"><b>予想降雪量 ${h(weatherValue(f.snow,'cm',1))}</b><small>1日合計・積雪深とは異なります</small></div></div>`:
+ `<p class="weather-unavailable">${h(message)}${target>stepDay(today(),2)||target<today()?'（表示対象の予報期間外）':''}</p>`}
+ <div class="weather-foot"><span>${h(weatherLabel())} · ${h(weatherStatus())}</span><span>予報：Open-Meteo</span></div></div>`;
+}
+function refreshWeatherPanels(){const home=$('#weather-today'),tomorrow=$('#weather-tomorrow');if(home)home.innerHTML=renderWeatherToday();if(tomorrow)tomorrow.innerHTML=renderWeatherTomorrow(ui.day)}
+function geolocate(){return new Promise((resolve,reject)=>{
+ if(!navigator.geolocation||!window.isSecureContext){reject(new Error('位置情報はHTTPSのSafari・PWAで利用してください。'));return}
+ navigator.geolocation.getCurrentPosition(position=>resolve({lat:position.coords.latitude,lon:position.coords.longitude}),
+ err=>reject(new Error(err.code===1?'位置情報の利用が許可されていません。iPhoneの位置情報設定をご確認ください。':err.code===3?'位置情報の取得がタイムアウトしました。':'位置情報を取得できませんでした。')),
+ {enableHighAccuracy:false,timeout:15000,maximumAge:180000});
+ })}
+let weatherUpdating=null,weatherGeneration=0;
+async function requestWeatherUpdate(force=false){
+ if(weatherUpdating&&!force&&weatherRuntime.key===weatherCacheKey())return weatherUpdating;
+ const generation=++weatherGeneration;
+ const job=async()=>{
+  const w=ensureWeatherState(),key=weatherCacheKey(),cached=cachedWeather(key);
+  weatherRuntime.key=key;weatherRuntime.forecast=cached||null;weatherRuntime.fetchedAt=cached?.at||0;weatherRuntime.error='';weatherRuntime.loading=false;refreshWeatherPanels();
+  if(!key)return;
+  const fresh=cached&&Date.now()-cached.at<WEATHER_TTL_MS;
+  if(!force&&fresh&&w.mode==='manual')return;
+  if(!navigator.onLine){if(!cached)weatherRuntime.error='オフラインのため予報を取得できません。';refreshWeatherPanels();return}
+  let coords;
+  if(w.mode==='manual'){
+    const place=weatherPlace();if(!place)return;coords={lat:Number(place.lat),lon:Number(place.lon)};
+  } else {
+    if(weatherRuntime.autoCoords&&!force&&Date.now()-weatherRuntime.autoPositionAt<15*60*1000){coords=weatherRuntime.autoCoords}
+    else {
+      weatherRuntime.loading=!cached;refreshWeatherPanels();
+      try{coords=await geolocate();weatherRuntime.autoCoords=coords;weatherRuntime.autoPositionAt=Date.now()}
+      catch(err){if(generation===weatherGeneration){weatherRuntime.error=err.message;weatherRuntime.loading=false;refreshWeatherPanels()}return}
+    }
+    if(generation!==weatherGeneration)return;
+    if(!force&&fresh&&weatherRuntime.autoLastFetchedCoords&&
+       Math.abs(weatherRuntime.autoLastFetchedCoords.lat-coords.lat)<0.02&&
+       Math.abs(weatherRuntime.autoLastFetchedCoords.lon-coords.lon)<0.02)return;
+  }
+  weatherRuntime.loading=!cached;refreshWeatherPanels();
+  const url=new URL('https://api.open-meteo.com/v1/forecast');
+  url.searchParams.set('latitude',String(Number(coords.lat).toFixed(4)));
+  url.searchParams.set('longitude',String(Number(coords.lon).toFixed(4)));
+  url.searchParams.set('daily','weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,snowfall_sum');
+  url.searchParams.set('timezone','auto');url.searchParams.set('forecast_days','3');
+  const controller=new AbortController(),timeout=setTimeout(()=>controller.abort(),12000);
+  try{
+   const response=await fetch(url.toString(),{signal:controller.signal,cache:'no-store'});
+   if(!response.ok)throw new Error(`予報サーバーへの接続に失敗しました（${response.status}）。`);
+   const obj=await response.json();
+   if(obj.error||!Array.isArray(obj.daily?.time)||!Array.isArray(obj.daily?.weather_code))throw new Error('天気データを取得できませんでした。');
+   if(generation!==weatherGeneration)return;
+   // Retain only daily weather variables; no coordinates or business information in cache.
+   const day=Object.fromEntries(['time','weather_code','temperature_2m_max','temperature_2m_min','precipitation_probability_max','snowfall_sum'].map(k=>[k,Array.isArray(obj.daily[k])?obj.daily[k].slice(0,3):[]]));
+   putWeatherCache(key,day);
+   weatherRuntime.forecast=cachedWeather(key);weatherRuntime.fetchedAt=Date.now();weatherRuntime.error='';
+   if(w.mode==='auto')weatherRuntime.autoLastFetchedCoords=coords;
+  }catch(err){if(generation!==weatherGeneration)return;weatherRuntime.error=err.name==='AbortError'?'天気の取得がタイムアウトしました。':err.message||'天気情報を取得できませんでした。'}
+  finally{clearTimeout(timeout);if(generation===weatherGeneration){weatherRuntime.loading=false;refreshWeatherPanels()}}
+ };
+ const promise=job();weatherUpdating=promise;
+ try{await promise}finally{if(weatherUpdating===promise)weatherUpdating=null}
+}
+
 function homeTodoRow(t){
  const done=t.status==='done',goal=goalById(t.goalId),due=taskDue(t),reason=todayTaskReason(t);
  const when=due?`完了予定 ${h(niceDay(due,false))}`:'完了予定日未設定';
@@ -233,6 +366,7 @@ function homeMedal(tasks){
 }
 function renderHome(){const d=dayData(stepDay(today(),-1)),tasks=homeTodoItems(),unfinished=tasks.filter(t=>t.status!=='done'),finished=tasks.filter(t=>t.status==='done'),active=data.goals.filter(g=>!g.archivedAt).slice(0,5);let percentActive=active.map(g=>({...g,progress:goalProgress(g.id)}));
 return `${header('今日の研究記録','小さな気づきが、仕事の質を変えていきます。','THE DAILY JOURNAL',homeMedal(tasks))}
+<div id="weather-today">${renderWeatherToday()}</div>
 ${dayStrip(today())}
 <div class="hero-grid"><div class="stack">
 <section class="card">${sectionHead('今日の行動目標','target','navigate-daily','前日の記録を編集')}<div class="goal-strip">${d.tomorrow?`<p>${nl(d.tomorrow)}</p>`:`<div class="empty-note">今日の行動目標はまだありません。前日の業務記録で設定しましょう。</div>`}</div></section>
@@ -257,6 +391,7 @@ ${doneToday.length?`<div class="tip">${icon('check','icon-mini')} 今日完了�
 </div></section>
 <section class="card"><div class="soft-head">${icon('target','icon-mini')} 今日と明日の行動</div><div class="form-section daily-form">
 <div class="field"><label>昨日決めた行動目標</label><div class="tip preline">${h(prev.tomorrow||'昨日の目標はまだ登録されていません。')}</div></div>
+<div id="weather-tomorrow">${renderWeatherTomorrow(ui.day)}</div>
 <div class="field"><label for="daily-tomorrow">明日につなげたい行動目標</label><textarea id="daily-tomorrow" data-daily="tomorrow" placeholder="できれば1～3件、具体的な行動を。">${h(d.tomorrow)}</textarea><small>翌日のホーム画面に表示します。</small></div></div></section></div>
 <div class="stack"><section class="card"><div class="soft-head">${icon('chart','icon-mini')} 一日の自己評価</div><div class="form-section"><p class="help-copy">成果の大小ではなく、自分でコントロールできた行動を評価します。未入力でも構いません。</p><div class="ratings-grid">${RATING_FIELDS.map(([key,label])=>`<div class="rating-row"><span>${h(label)}</span><div class="rating-buttons">${[1,2,3,4,5].map(n=>`<button data-action="rate" data-key="${key}" data-value="${n}" class="${d.ratings[key]===n?'selected':''}" aria-label="${h(label)} ${n}点" aria-pressed="${d.ratings[key]===n}">${n}</button>`).join('')}</div></div>`).join('')}</div>
 <div class="field mt15"><label for="daily-praise">今日の自分を褒めるなら？</label><textarea id="daily-praise" data-daily="praise" placeholder="小さな一歩も、きちんと認めましょう。">${h(d.praise)}</textarea></div></div></section>
@@ -449,7 +584,14 @@ ${renderAttendanceCalendar()}
 <section class="card mt20"><div class="soft-head">${icon('book','icon-mini')} この期間の主な記録</div><div class="panel-body">${p.notes.length?p.notes.slice().reverse().slice(0,8).map(n=>`<div class="daily-todo"><span class="tag">${h(NOTE_TYPES[n.kind])}</span><button class="text-btn" style="flex:1;text-align:left" data-action="edit-note" data-id="${h(n.id)}">${h(n.title)}</button><small>${shortDate(n.date)}</small></div>`).join(''):`<div class="empty-note">この期間の研究ノートはまだありません。</div>`}</div></section>
 <div class="notice-bar mt20">${icon('target','icon-mini')}<span>記録件数は仕事の能力そのものではありません。得た学びが、次の行動や判断にどう活かされたかを大切にしましょう。</span></div>`}
 function renderSettings(){return `${header('設定・データ管理','情報の保存と、AIへ渡す文章を慎重に管理します。','PREFERENCES')}
-<div class="settings-grid"><section class="settings-panel"><h3>${icon('shield')} 保存方式と情報保護</h3><p>現在の保存方式：<strong class="${storeMethod==='memory'?'storage-warn':'storage-ok'}">${h(storeMethod==='IndexedDB'?'端末内（IndexedDB）':storeMethod==='localStorage'?'端末内（localStorage）':'保存不可：一時メモリのみ')}</strong><br>データはこのブラウザの保存領域にあります。アプリは外部データベースや分析サービスに接続しません。ただし、ブラウザ保存領域は暗号化されておらず、端末・ブラウザの設定によって消去される場合があります。</p><div class="notice-bar">${icon('shield','icon-mini')}<span>個人端末への業務情報保存や外部AIへの入力が許可されるか、必ず勤務先の情報管理規程を確認してください。クラウド型ホスティングに配置した場合も、記録内容の送信機能はありません。</span></div></section>
+<div class="settings-grid"><section class="settings-panel"><h3>${icon('shield')} 保存方式と情報保護</h3><p>現在の保存方式：<strong class="${storeMethod==='memory'?'storage-warn':'storage-ok'}">${h(storeMethod==='IndexedDB'?'端末内（IndexedDB）':storeMethod==='localStorage'?'端末内（localStorage）':'保存不可：一時メモリのみ')}</strong><br>データはこのブラウザの保存領域にあります。業務記録は外部データベースや分析サービスへ送信しません。天気予報の利用時のみ、設定地点の緯度・経度をOpen-Meteoへ送信します。ただし、ブラウザ保存領域は暗号化されておらず、端末・ブラウザの設定によって消去される場合があります。</p><div class="notice-bar">${icon('shield','icon-mini')}<span>個人端末への業務情報保存や外部AIへの入力が許可されるか、必ず勤務先の情報管理規程を確認してください。クラウド型ホスティングに配置した場合も、記録内容の送信機能はありません。</span></div></section>
+<section class="settings-panel weather-settings"><h3>☀ 天気予報・位置情報</h3>
+<p>無料のOpen-Meteoから天気予報を取得します。業務記録やTODOは送信しませんが、<strong>天気の取得時に位置情報（緯度・経度）はOpen-Meteoへ送信されます。</strong>自動取得は画面を開いたときに位置情報を確認します。手動取得では登録時にだけ位置情報を取得します。</p>
+<div class="field"><label for="weather-mode">天気の取得地点</label><select id="weather-mode" data-change="weather-mode"><option value="manual" ${ensureWeatherState().mode==='manual'?'selected':''}>手動：登録した地点を使う</option><option value="auto" ${ensureWeatherState().mode==='auto'?'selected':''}>自動：現在地を使用する</option></select></div>
+${ensureWeatherState().mode==='manual'?`<div class="field mt10"><label for="weather-place-select">使用する地点</label><select id="weather-place-select" data-change="weather-place"><option value="">地点を選択</option>${ensureWeatherState().places.map(p=>`<option value="${h(p.id)}" ${p.id===ensureWeatherState().selectedPlaceId?'selected':''}>${h(p.name)}</option>`).join('')}</select></div><div class="weather-places">${ensureWeatherState().places.map(p=>`<div class="weather-place-row"><span>${h(p.name)} ${p.id===ensureWeatherState().selectedPlaceId?'<small>使用中</small>':''}</span><div><button class="pale-button" data-action="weather-edit-place" data-id="${h(p.id)}">名称</button><button class="pale-button" data-action="weather-delete-place" data-id="${h(p.id)}">削除</button></div></div>`).join('')||'<p class="help-copy">まだ地点は登録されていません。</p>'}</div><button class="outline-btn small-btn" data-action="weather-add-place">${icon('plus','icon-mini')} 現在地を取得して名前を付けて登録</button>`:
+ `<p class="tip mt10">自動取得中です。位置情報が許可されている場合、ホーム・業務記録画面を開いた際に現在地を使います。</p>`}
+<div class="settings-actions mt15"><button class="outline-btn small-btn" data-action="weather-refresh">☀ 天気予報を更新する</button></div>
+<p class="help-copy mt10">予報はオンライン時に取得し、最大3時間は同じ予報を再利用します。圏外では前回の予報を参考表示します。取得地点は暗号化バックアップに含まれます。</p></section>
 <section class="settings-panel"><h3>${icon('copy')} 暗号化バックアップ</h3><p>パスワードを使ってAES-GCM方式で暗号化したバックアップをファイルに保存します。別の端末に移す場合は、このファイルを読み込めます。パスワードを失うと復元できません。</p><div class="settings-actions"><button class="primary-btn" data-action="backup">${icon('shield','icon-mini')} 暗号化して書き出す</button><button class="outline-btn" data-action="restore">${icon('folder','icon-mini')} バックアップから復元</button></div></section>
 <section class="settings-panel"><h3>${icon('chart')} 保存データの概要</h3><div class="data-summary"><div><b>${data.goals.length}</b><small>目標</small></div><div><b>${data.tasks.length}</b><small>TODO</small></div><div><b>${data.notes.length}</b><small>研究メモ</small></div></div><p class="mt10">通勤記録：${Object.keys(ensureCommuteState().entries).length}日分／装備：${data.commute.equipment.length}件／緊急連絡先：${data.commute.contacts.length}件。</p><p class="mt10">業務記録：${Object.values(data.days).filter(hasDayRecord).length}日分。ブラウザデータを消去すると、この記録も消えることがあります。</p></section>
 <section class="settings-panel"><h3>${icon('copy')} AI用プロンプト</h3><p>日報や週次振り返りを、外部AIに貼り付けるための文章に変換します。生成・コピーだけではAIに送信されません。貼り付ける前に、社名・顧客・担当者・社内の事情・価格・契約条件などを削除してください。</p><button class="outline-btn" data-action="open-prompt" data-type="daily">${icon('copy','icon-mini')} プロンプト生成を開く</button></section>
@@ -472,6 +614,9 @@ switch(m.type){
 case 'group': {const g=data.groups.find(x=>x.id===m.id);title=g?'グループを編集':'グループを作成';body=`<form id="modal-form" data-form="group" class="field-group">${inputField('グループ名','name',g?.name||'',{required:true,max:70,placeholder:'例：営業スキルの習得'})}${inputField('グループの完了予定日（任意）','dueDate',g?.dueDate||'',{type:'date',help:'グループ全体の達成を目指す日付です。カレンダーでは◆で表示します。'})}<p class="help-copy">グループは目標を整理するためのフォルダです。目標の中にTODOツリーを作ります。</p></form>`;footer=footerButtons(g?`<button class="danger-btn small-btn" data-action="delete-group" data-id="${h(g.id)}">削除</button>`:'');break}
 case 'goal': {const g=goalById(m.id);title=g?'目標を編集':'目標を作成';const groupOpts=[['','未分類'],...data.groups.map(x=>[x.id,x.name])];body=`<form id="modal-form" data-form="goal" class="field-group">${inputField('達成したい目標','title',g?.title||'',{required:true,max:120,placeholder:'例：新商品の説明を一人でできるようになる'})}${selectField('所属グループ','groupId',groupOpts,g?.groupId||(!g&&ui.activeGroup!=='all'&&ui.activeGroup!=='ungrouped'?ui.activeGroup:''))}${inputField('目標の背景・目的','description',g?.description||'',{textarea:true,placeholder:'なぜ取り組むのか？'})}${inputField('達成したと判断できる条件','doneCriteria',g?.doneCriteria||'',{textarea:true,placeholder:'どの状態になれば達成か？'})}${inputField('目標の完了予定日（任意）','dueDate',g?.dueDate||'',{type:'date',help:'カレンダーでは赤い●で表示します。'})}</form>`;footer=footerButtons(g?`<button class="danger-btn small-btn" data-action="delete-goal" data-id="${h(g.id)}">目標とTODOを削除</button>`:'');break}
 case 'task': {const t=taskById(m.id);const goalId=t?.goalId||m.goalId;const goal=goalById(goalId);title=t?'TODOを編集':'子TODOを追加';if(!goal){hideModal();return}body=`<form id="modal-form" data-form="task" class="field-group"><div class="tip">目標：${h(goal.title)}${m.parentId?`<br>一歩後の行動：${h(taskById(m.parentId)?.title||'')}`:''}</div>${inputField('実行する行動','title',t?.title||'',{required:true,max:160,placeholder:'例：製品資料を10分読む'})}${inputField('目的・手順（任意）','description',t?.description||'',{textarea:true,placeholder:'どのように進める？'})}${inputField('完了条件（任意）','doneCriteria',t?.doneCriteria||'',{textarea:true,placeholder:'例：主要な機能を3つ説明できる'})}${inputField('実行条件（任意）','trigger',t?.trigger||'',{placeholder:'例：製品資料が手元にあるとき'})}${selectField('状態','status',Object.entries(TASK_STATUS),t?.status||'todo')}<small class="help-copy">完了状態はこのTODOだけに適用され、親子のTODOには自動反映されません。</small>${inputField('完了予定日（任意）','dueDate',t?.dueDate||'',{type:'date',help:'カレンダーでは子TODOの通過点として表示します。設定した日付が今日になると、ホームのTODOに自動表示されます。期限超過の未完了TODOも表示します。'})}${t?.completedAt?`<div class="tip">実際の完了日：${h(niceDay(dstr(new Date(t.completedAt))))}</div>`:''}</form>`;footer=footerButtons(t?`<button class="danger-btn small-btn" data-action="delete-task" data-id="${h(t.id)}">この枝を削除</button>`:'');break}
+case 'weather-place':{const p=ensureWeatherState().places.find(x=>x.id===m.id);title=p?'登録地点の名前を編集':'新しい地点を登録';
+ body=`<form id="modal-form" data-form="weather-place" class="field-group">${inputField('地点の名前','name',p?.name||'',{required:true,max:60,placeholder:'例：自宅付近・勤務先周辺'})}<div class="tip">${p?'登録済みの地点の名称だけを変更します。':'いま取得した位置情報を、指定した名前で保存します。'}<br>緯度 ${h(Number(p?.lat??m.lat).toFixed(3))}、経度 ${h(Number(p?.lon??m.lon).toFixed(3))}</div><p class="help-copy">地点データはこの端末に保存され、バックアップに含まれます。天気を取得するときだけ座標をOpen-Meteoへ送信します。</p></form>`;
+ footer=footerButtons();break}
 case 'equipment': {const item=ensureCommuteState().equipment.find(x=>x.id===m.id);title=item?'装備を編集':'出発用の装備を登録';body=`<form id="modal-form" data-form="equipment" class="field-group">${inputField('装備名','title',item?.title||'',{required:true,max:90,placeholder:'例：冬用の革靴、社員証、手袋、傘'})}${selectField('分類','category',EQUIPMENT_CATEGORIES.map(x=>[x,x]),item?.category||'持ち物')}<p class="help-copy">装備名は保存されますが、毎朝のチェック状態は保存しません。</p></form>`;footer=footerButtons(item?`<button class="danger-btn small-btn" data-action="delete-equipment" data-id="${h(item.id)}">削除</button>`:'');break}
 case 'contact': {const c=ensureCommuteState().contacts.find(x=>x.id===m.id);title=c?'緊急連絡先を編集':'緊急連絡先を登録';body=`<form id="modal-form" data-form="contact" class="field-group">${inputField('連絡先の名前・窓口','name',c?.name||'',{required:true,max:100,placeholder:'例：会社の代表電話、緊急連絡窓口'})}${inputField('電話番号','phone',c?.phone||'',{type:'tel',required:true,placeholder:'例：011-000-0000'})}${inputField('補足・連絡時の注意（任意）','description',c?.description||'',{textarea:true,placeholder:'例：交通機関の運休時はここに連絡'})}<div class="notice-bar">${icon('shield','icon-mini')}<span>個人情報や社内の連絡先を登録する前に、保存先が勤務先の規程に適合するか確認してください。</span></div></form>`;footer=footerButtons(c?`<button class="danger-btn small-btn" data-action="delete-contact" data-id="${h(c.id)}">削除</button>`:'');break}
 case 'note': {const n=data.notes.find(x=>x.id===m.id);title=n?'研究メモを編集':'新しい研究メモ';body=`<form id="modal-form" data-form="note" class="field-group"><div class="field-row">${selectField('記録の種類','kind',Object.entries(NOTE_TYPES),n?.kind||m.kind||'insight')}${inputField('日付','date',n?.date||ui.day||today(),{type:'date',required:true})}</div>${inputField('タイトル','title',n?.title||'',{required:true,max:160,placeholder:'例：お客様への説明で気づいたこと'})}${inputField('出来事・状況','details',n?.details||'',{textarea:true,placeholder:'何が起こった？　何を観察した？'})}${inputField('自分の行動・選んだ方法','action',n?.action||'',{textarea:true,placeholder:'どのように対応した？ 他に選択肢はあった？'})}${inputField('理由・原因・仮説','cause',n?.cause||'',{textarea:true,placeholder:'なぜそうなった？ なぜその判断をした？'})}${inputField('結果・分かったこと','result',n?.result||'',{textarea:true,placeholder:'何が分かった？ 結果待ちなら空欄でも構いません。'})}${inputField('次に試すこと・確認すること','nextStep',n?.nextStep||'',{textarea:true,placeholder:'次の行動として何ができる？'})}<div class="field-row">${selectField('調査・進行状況','status',Object.entries(NOTE_STATUS),n?.status||'open')}${inputField('タグ','tags',n?.tags||'',{placeholder:'例：接客、商品知識'})}</div></form>`;footer=footerButtons(n?`<button class="danger-btn small-btn" data-action="delete-note" data-id="${h(n.id)}">削除</button>`:'');break}
@@ -625,10 +770,11 @@ if(!m)return;
 if(m.type==='group'){if(!trim('name')){toast('グループ名を入力してください');return}if(id){const g=data.groups.find(x=>x.id===id);if(g){g.name=trim('name');g.dueDate=trim('dueDate')}}else{const g={id:uid(),name:trim('name'),dueDate:trim('dueDate'),createdAt:isoNow()};data.groups.push(g);ui.activeGroup=g.id}}
 if(m.type==='goal'){if(!trim('title')){toast('目標を入力してください');return}let g=id?goalById(id):null;if(!g){g={id:uid(),createdAt:isoNow(),archivedAt:null};data.goals.push(g)}g.title=trim('title');g.groupId=trim('groupId');g.description=trim('description');g.doneCriteria=trim('doneCriteria');g.dueDate=trim('dueDate');ui.activeGoal=g.id;ui.activeGroup='all';ui.todoView='tree'}
 if(m.type==='task'){if(!trim('title')){toast('TODO名を入力してください');return}let t=id?taskById(id):null;const goalId=t?.goalId||m.goalId;if(!goalById(goalId)){toast('目標が見つかりません');return}if(!t){t={id:uid(),goalId,parentId:m.parentId||null,createdAt:isoNow(),completedAt:null,availability:'ready',plannedDate:''};data.tasks.push(t)}t.title=trim('title');t.description=trim('description');t.doneCriteria=trim('doneCriteria');t.trigger=trim('trigger');/* Keep legacy availability and plannedDate for compatibility and 今日に追加. */t.dueDate=trim('dueDate');t.status=trim('status')||'todo';if(t.status==='done')t.completedAt=t.completedAt||isoNow();else t.completedAt=null;ui.activeGoal=goalId}
+if(m.type==='weather-place'){const name=trim('name');if(!name){toast('地点名を入力してください');return}const w=ensureWeatherState();let p=id?w.places.find(x=>x.id===id):null;if(!p){if(!validCoords(m.lat,m.lon)){toast('位置情報を取得し直してください');return}p={id:uid(),lat:Number(m.lat),lon:Number(m.lon),createdAt:isoNow()};w.places.push(p)}p.name=name;w.selectedPlaceId=p.id;weatherGeneration++;weatherRuntime.key='';weatherRuntime.forecast=null}
 if(m.type==='equipment'){if(!trim('title')){toast('装備名を入力してください');return}const list=ensureCommuteState().equipment;let x=id?list.find(x=>x.id===id):null;if(!x){x={id:uid(),createdAt:isoNow()};list.push(x)}x.title=trim('title');x.category=EQUIPMENT_CATEGORIES.includes(trim('category'))?trim('category'):'持ち物';ui.commuteChecked.delete(x.id)}
 if(m.type==='contact'){if(!trim('name')||!trim('phone')){toast('名前と電話番号を入力してください');return}const phone=trim('phone');if(!/^[+0-9０-９()（）\-ー－\s]{5,30}$/.test(phone)||phone.replace(/\D/g,'').length<5){toast('電話番号を確認してください');return}const list=ensureCommuteState().contacts;let c=id?list.find(x=>x.id===id):null;if(!c){c={id:uid(),createdAt:isoNow()};list.push(c)}c.name=trim('name');c.phone=phone;c.description=trim('description')}
 if(m.type==='note'){if(!trim('title')){toast('タイトルを入力してください');return}let n=id?data.notes.find(x=>x.id===id):null;if(!n){n={id:uid(),createdAt:isoNow()};data.notes.push(n)}for(const k of ['kind','date','title','details','action','cause','result','nextStep','status','tags'])n[k]=trim(k);n.updatedAt=isoNow()}
-hideModal();persist();render();toast('保存しました')}
+hideModal();persist();render();if(m.type==='weather-place')requestWeatherUpdate(true);toast('保存しました')}
 async function submitForm(form){const type=ui.modal?.type;if(type==='backup'){const pw=form.elements.password.value,again=form.elements.passwordAgain.value;if(pw.length<8){toast('パスワードは8文字以上にしてください');return}if(pw!==again){toast('確認用パスワードが一致しません');return}try{const file=await backupEncrypt(pw);downloadFile(file,`業務研究室-暗号化バックアップ-${today()}.brlab`);hideModal();toast('暗号化バックアップを保存しました')}catch(e){console.error(e);toast('バックアップに失敗しました：'+e.message)}return}
 if(type==='restore'){
  const file=form.elements.file.files?.[0],pass=form.elements.password.value;
@@ -645,8 +791,8 @@ if(type==='restore'){
    throw e;
   }
   if(!confirm(`バックアップの目標 ${recovered.goals.length}件、研究メモ ${recovered.notes.length}件を読み込み、現在のデータをすべて置き換えます。よろしいですか？`))return;
-  data=recovered;ensureCommuteState();ui.commuteChecked.clear();ui.activeGoal=null;ui.activeGroup='all';ui.day=today();
-  await persist();hideModal();render();toast('復元しました');
+  data=recovered;ensureCommuteState();ensureWeatherState();weatherGeneration++;ui.commuteChecked.clear();ui.activeGoal=null;ui.activeGroup='all';ui.day=today();
+  await persist();hideModal();render();requestWeatherUpdate();toast('復元しました');
  }catch(e){console.error(e);toast('復元できませんでした：'+(e.message||'ファイルやパスワードをご確認ください。'))}
  return
 }
@@ -672,6 +818,18 @@ document.addEventListener('click',async e=>{
  if(action==='navigate-exec'){ui.todoView='list';ui.execFilter='all';ui.execScope='all';changePage('todos');return}
  if(action==='day-step'){if(ui.page==='home'){ui.day=stepDay(today(),Number(el.dataset.step));changePage('daily')}else{ui.day=stepDay(ui.day,Number(el.dataset.step));render()}return}
  if(action==='day-today'){ui.day=today();if(ui.page==='home')changePage('daily');else render();return}
+ if(action==='weather-refresh'){requestWeatherUpdate(true);return}
+ if(action==='weather-add-place'){
+  toast('現在地を確認しています…');
+  try{const coords=await geolocate();showModal('weather-place',coords)}catch(error){toast(error.message)}return;
+ }
+ if(action==='weather-edit-place'){const p=ensureWeatherState().places.find(x=>x.id===id);if(p)showModal('weather-place',{id});return}
+ if(action==='weather-delete-place'){
+  const w=ensureWeatherState(),p=w.places.find(x=>x.id===id);if(!p||!confirm(`「${p.name}」の位置情報を削除しますか？`))return;
+  w.places=w.places.filter(x=>x.id!==id);if(w.selectedPlaceId===id)w.selectedPlaceId=w.places[0]?.id||'';
+  delete weatherCache['place:'+id];try{localStorage.setItem(WEATHER_CACHE_KEY,JSON.stringify(weatherCache))}catch(_){}
+  weatherGeneration++;weatherRuntime.forecast=null;persist();render();requestWeatherUpdate();toast('地点を削除しました');return;
+ }
  if(action==='new-group'){showModal('group');return}
  if(action==='edit-group'){showModal('group',{id});return}
  if(action==='new-goal'){showModal('goal');return}
@@ -728,7 +886,7 @@ document.addEventListener('click',async e=>{
  if(action==='delete-note'){if(confirm('この研究メモを削除しますか？')){data.notes=data.notes.filter(n=>n.id!==id);hideModal();persist();render();toast('研究メモを削除しました')}return}
  if(action==='duplicate-goal'){duplicateGoal(id);return}
  if(action==='archive-goal'){const g=goalById(id);if(g){g.archivedAt=g.archivedAt?null:isoNow();persist();render();toast(g.archivedAt?'研究成果として保存しました':'研究成果から戻しました')}return}
- if(action==='clear-data'){const val=prompt('すべてのデータを削除するには「削除」と入力してください。');if(val!=='削除')return;if(!confirm('本当にすべての記録を削除しますか？暗号化バックアップがない場合、復元できません。'))return;data=newState();ui.activeGroup='all';ui.activeGoal=null;ui.day=today();await persist();render();toast('データを初期化しました');return}
+ if(action==='clear-data'){const val=prompt('すべてのデータを削除するには「削除」と入力してください。');if(val!=='削除')return;if(!confirm('本当にすべての記録を削除しますか？暗号化バックアップがない場合、復元できません。'))return;data=newState();weatherGeneration++;weatherRuntime.forecast=null;weatherCache={};try{localStorage.removeItem(WEATHER_CACHE_KEY)}catch(_){}ui.activeGroup='all';ui.activeGoal=null;ui.day=today();await persist();render();toast('データを初期化しました');return}
 });
 document.addEventListener('input',e=>{const el=e.target;
  if(el.dataset.daily){if((el.dataset.daily==='clockIn'||el.dataset.daily==='clockOut')&&el.value&&!/^([01]\d|2[0-3]):[0-5]\d$/.test(el.value))return;const d=dayData(ui.day);d[el.dataset.daily]=el.value;d.updatedAt=isoNow();scheduleSave();const status=$('#autosave-label');if(status){status.textContent='保存中…';clearTimeout(status._timer);status._timer=setTimeout(()=>{status.textContent='自動保存しました'},800)}return}
@@ -742,6 +900,12 @@ document.addEventListener('change',e=>{const el=e.target;
   if(label)label.textContent=el.files?.[0]?'選択中：'+el.files[0].name:'ファイルが選択されていません';
   return;
  }
+ if(el.dataset.change==='weather-mode'){
+  const w=ensureWeatherState();w.mode=el.value==='auto'?'auto':'manual';weatherGeneration++;weatherRuntime.forecast=null;weatherRuntime.error='';persist();render();requestWeatherUpdate(true);return;
+ }
+ if(el.dataset.change==='weather-place'){
+  const w=ensureWeatherState();w.selectedPlaceId=w.places.some(p=>p.id===el.value)?el.value:'';weatherGeneration++;weatherRuntime.forecast=null;weatherRuntime.error='';persist();render();requestWeatherUpdate();return;
+ }
  if(el.dataset.change==='commute-date'){if(isDate(el.value)){ui.commuteDay=el.value;render()}else toast('日付が正しくありません');return}
  if(el.dataset.change==='exec-filter'){ui.execFilter=el.value;render();return}
  if(el.dataset.change==='exec-scope'){ui.execScope=el.value;render();return}
@@ -753,7 +917,7 @@ document.addEventListener('change',e=>{const el=e.target;
 });
 document.addEventListener('keydown',e=>{if(e.key==='Escape'&&ui.modal)hideModal()});
 window.addEventListener('pagehide',()=>{if(saveTimer){clearTimeout(saveTimer);saveTimer=null;persist()}});
-window.addEventListener('online',showPwaInfo);
+window.addEventListener('online',()=>{showPwaInfo();if(ui.page==='home'||ui.page==='daily')requestWeatherUpdate()});
 window.addEventListener('offline',showPwaInfo);
 if('serviceWorker' in navigator){
   navigator.serviceWorker.addEventListener('controllerchange',()=>{

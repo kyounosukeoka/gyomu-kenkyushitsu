@@ -1,6 +1,6 @@
-/* 業務研究室 v1.4.9 — 同じアプリの静的ファイルのみをオフライン保存。記録データは扱わない。 */
+/* 業務研究室 v1.5.0 — 同じアプリの静的ファイルのみをオフライン保存。記録データは扱わない。 */
 const APP_CACHE_PREFIX = 'gyomu-research-app-';
-const APP_CACHE = APP_CACHE_PREFIX + 'v1.4.9';
+const APP_CACHE = APP_CACHE_PREFIX + 'v1.5.0';
 const CORE = [
   './', './index.html', './styles.css?v=1.4.9', './app.js?v=1.4.9',
   './manifest.webmanifest', './icon.svg', './icon-192.png',
