@@ -171,3 +171,21 @@ html,body{width:100%;max-width:100%;overflow-x:hidden;touch-action:pan-x pan-y}
  .attendance-weekdays span{font-size:11px;padding:5px 0}
  .attendance-legend{gap:9px;font-size:10px;justify-content:flex-start}
 }
+
+/* Ver.1.4.7 — two modes for AI business report export */
+.report-mode-field{margin-top:13px;display:grid;gap:6px}.report-mode-field select{min-height:44px}.report-scope-note{display:flex;align-items:flex-start;gap:9px;background:#f9f1e0;color:#594b36;border:1px solid #deceb1;border-radius:9px;padding:11px 13px;margin-top:12px;font-size:12px;line-height:1.65}.report-scope-note .icon{color:#946b36;margin-top:2px}.report-scope-note span{flex:1}.report-modal-actions{display:flex;flex-wrap:wrap;gap:8px;justify-content:flex-end;width:100%}.report-modal-actions button{max-width:100%}
+@media(max-width:600px){.report-modal-actions{justify-content:stretch}.report-modal-actions button{flex:1 1 120px;white-space:normal}}
+
+
+/* Ver.1.4.8: unified deadline-based TODO views */
+.todo-list-filters{display:flex;align-items:end;flex-wrap:wrap;gap:9px 12px}
+.todo-scope-label{display:flex;flex-direction:column;gap:3px;color:#554e40;font-size:11px;font-weight:700;min-width:135px}
+.todo-scope-label select{max-width:100%;min-height:38px;border:1px solid #d2c3a7;border-radius:7px;padding:7px 9px;background:#fffaf0;color:#29382e}
+.task-context{display:block;font-size:11px;color:#776b5a;overflow-wrap:anywhere}
+.date-chip-unset{color:#817466;background:#f4efea;border-color:#ded3c5}
+.overdue-chip{color:#9e3e3a;background:#fbebe8;border-color:#e8c4bf}
+.home-todo-overdue{color:#a03a3a;font-weight:700}
+.home-todo-manual{color:#306b4f;font-weight:700}
+.calendar-scope-bar{display:flex;align-items:end;flex-wrap:wrap;gap:9px 17px;padding:12px 17px;background:#fbf5e9;border-bottom:1px solid #e5d9c6}
+.calendar-scope-bar span{color:#726757;font-size:11px;line-height:1.5}
+@media(max-width:600px){.todo-list-filters .todo-scope-label{flex:1;min-width:128px}.calendar-scope-bar{padding:9px 10px}.task-context{line-height:1.5}}
