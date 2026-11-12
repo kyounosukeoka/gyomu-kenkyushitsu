@@ -189,3 +189,20 @@ html,body{width:100%;max-width:100%;overflow-x:hidden;touch-action:pan-x pan-y}
 .calendar-scope-bar{display:flex;align-items:end;flex-wrap:wrap;gap:9px 17px;padding:12px 17px;background:#fbf5e9;border-bottom:1px solid #e5d9c6}
 .calendar-scope-bar span{color:#726757;font-size:11px;line-height:1.5}
 @media(max-width:600px){.todo-list-filters .todo-scope-label{flex:1;min-width:128px}.calendar-scope-bar{padding:9px 10px}.task-context{line-height:1.5}}
+
+/* Ver.1.4.9: parent/child TODOs remain independent. Same-day due dates form a compact tree. */
+.home-todo-tree,.home-todo-tree-children{list-style:none;margin:0;padding:0;min-width:0}
+.home-todo-tree-node{position:relative;min-width:0}
+.home-todo-tree-node>.daily-todo{min-width:0}
+.home-todo-tree-children{margin:0 0 4px 21px;padding:0 0 0 13px;border-left:2px solid #8da58c}
+.home-todo-tree-children>.home-todo-tree-node:before{content:'';position:absolute;top:19px;left:-13px;width:12px;border-top:2px solid #8da58c;pointer-events:none}
+.home-todo-tree-children>.home-todo-tree-node:last-child:after{content:'';position:absolute;left:-15px;top:21px;bottom:0;width:3px;background:var(--cream);pointer-events:none}
+.home-todo-context{display:flex;align-items:center;gap:7px;min-width:0;padding:9px 9px 5px;color:#65736c;font-size:12px;background:#f3eee4;border-radius:6px}
+.home-todo-context span:nth-child(2){min-width:0;overflow-wrap:anywhere}
+.home-todo-context small{color:#897a6e;font-size:10px}
+.home-todo-context-icon{color:#638068;font-size:16px;flex:0 0 auto}
+.home-todo-tree-node.is-context>.home-todo-tree-children{margin-top:4px}
+.settings-version{grid-column:1/-1;border-color:#cab892;background:linear-gradient(135deg,#fffaf2,#f1e6d3)}
+.settings-version p{margin-bottom:0}
+.settings-version strong{color:#263c3a;letter-spacing:.02em}
+@media(max-width:600px){.home-todo-tree-children{margin-left:13px;padding-left:9px}.home-todo-tree-children>.home-todo-tree-node:before{left:-9px;width:8px}.home-todo-tree-children>.home-todo-tree-node:last-child:after{left:-11px}.home-todo-context{font-size:11px;padding:7px 4px}.home-todo-context small{font-size:10px}}

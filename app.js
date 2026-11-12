@@ -39,7 +39,7 @@ const shortDate=s=>{if(!s)return '';const d=parseDay(s);return `${d.getMonth()+1
 const isDate=s=>typeof s==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(s)&&dstr(parseDay(s))===s;
 const dueText=(s,label='完了予定')=>s&&isDate(s)?`${label}：${shortDate(s)}`:'完了予定日未設定';
 const dueTag=(s,label='完了予定')=>s&&isDate(s)?`<span class="date-chip">${icon('calendar','icon-mini')} ${h(label)} ${h(shortDate(s))}</span>`:'';
-function goalFinishedAt(id){const leaves=goalTasks(id).filter(isLeaf);if(!leaves.length||!leaves.every(t=>t.status==='done'&&t.completedAt))return null;return leaves.map(t=>t.completedAt).sort().at(-1)}
+function goalFinishedAt(id){const tasks=goalTasks(id);if(!tasks.length||!tasks.every(t=>t.status==='done'&&t.completedAt))return null;return tasks.map(t=>t.completedAt).sort().at(-1)}
 
 const isoNow=()=>new Date().toISOString();
 const defaultDay=()=>({clockIn:'',clockOut:'',summary:'',achievements:'',challenges:'',notices:'',tomorrow:'',praise:'',ratings:{},updatedAt:null});
@@ -56,7 +56,7 @@ let data=newState();
 let db=null,storeMethod='pending',saveQueue=Promise.resolve(),saveTimer=null;
 let ui={page:'home',day:today(),activeGroup:'all',activeGoal:null,todoView:'tree',calendarMonth:today().slice(0,7),calendarSelected:today(),attendanceMonth:today().slice(0,7),researchType:'all',researchQuery:'',collapsed:new Set(),execFilter:'all',execScope:'all',calendarScope:'all',reflectionPeriod:'week',commuteView:'check',commuteDay:today(),commuteChecked:new Set(),modal:null};
 let pendingToast=null;
-const APP_VERSION='1.4.8';
+const APP_VERSION='1.4.9';
 let pwa={registration:null,ready:false,updateAvailable:false,error:'',updating:false};
 const isInstalledApp=()=>window.matchMedia('(display-mode: standalone)').matches || navigator.standalone===true;
 function showPwaInfo(){
@@ -131,11 +131,12 @@ function taskById(id){return data.tasks.find(t=>t.id===id)}
 function goalTasks(id){return data.tasks.filter(t=>t.goalId===id)}
 function children(parent,goalId){return data.tasks.filter(t=>t.goalId===goalId&&t.parentId===parent).sort((a,b)=>a.createdAt.localeCompare(b.createdAt))}
 function isLeaf(t){return !data.tasks.some(x=>x.parentId===t.id)}
-function goalProgress(goalId){const leaves=goalTasks(goalId).filter(isLeaf),done=leaves.filter(t=>t.status==='done').length;return {done,total:leaves.length,pct:leaves.length?Math.round(done/leaves.length*100):0}}
+function goalProgress(goalId){const tasks=goalTasks(goalId),done=tasks.filter(t=>t.status==='done').length;return {done,total:tasks.length,pct:tasks.length?Math.round(done/tasks.length*100):0}}
 function taskPercent(t){const all=goalTasks(t.goalId);const underneath=(root)=>all.filter(x=>x.parentId===root);const leaves=[];function visit(root){const c=underneath(root);if(!c.length){const x=taskById(root);if(x)leaves.push(x);return}c.forEach(x=>visit(x.id))}visit(t.id);return leaves.length?Math.round(leaves.filter(x=>x.status==='done').length/leaves.length*100):0}
 function descendantIds(id){const found=[];const visit=i=>{found.push(i);data.tasks.filter(t=>t.parentId===i).forEach(x=>visit(x.id))};visit(id);return found}
-function syncParentStatuses(goalId){function update(t){const kids=children(t.id,t.goalId);kids.forEach(update);if(kids.length){if(kids.every(k=>k.status==='done'))t.status='done';else if(kids.some(k=>k.status==='done'||k.status==='doing'))t.status='doing';else t.status='todo';t.completedAt=t.status==='done'?(t.completedAt||isoNow()):null}}children(null,goalId).forEach(update)}
-function setTaskDone(id,done){const target=taskById(id);if(!target)return;descendantIds(id).forEach(tid=>{const t=taskById(tid);t.status=done?'done':'todo';t.completedAt=done?isoNow():null});syncParentStatuses(target.goalId);persist();render()}
+// Each TODO is a separate completion decision. Checking a leaf never changes its
+// ancestors, and checking a parent never changes its descendants.
+function setTaskDone(id,done){const t=taskById(id);if(!t)return;t.status=done?'done':'todo';t.completedAt=done?(t.completedAt||isoNow()):null;persist();render()}
 // 完了予定日が最優先。旧「今日に追加」(plannedDate)は手動ピンとして別扱い。
 // 期限未設定のTODOは勝手に期限を推測しない。
 function taskDue(t){return isDate(t.dueDate)?t.dueDate:null}
@@ -181,12 +182,41 @@ function homeTodoRow(t){
  const parent=taskTreePath(t).join(' › ');
  return `<div class="daily-todo"><button class="checkbox ${done?'checked':''}" data-action="toggle-task" data-id="${h(t.id)}" aria-label="${done?'未完了に戻す':'完了する'}：${h(t.title)}">${icon('check')}</button><div class="daily-todo-text"><strong class="${done?'done-text':''}">${h(t.title)}</strong><small>${h(goal?.title||'未分類の目標')}${parent?' › '+h(parent):''} · ${when}${hint}</small></div><button class="text-btn" data-action="focus-goal" data-id="${h(t.goalId)}" aria-label="${h(goal?.title||'目標')}のツリーを開く">${icon('tree','icon-mini')}</button></div>`;
 }
+// Show direct parent/child edges only when their actual due dates match.
+// A parent in the opposite status group is a non-interactive reference row,
+// so '未完了' and '完了' remain independent sections without hiding the tree.
+function homeTodoTree(items){
+ const nodes=new Map(),roots=[];const included=new Set(items.map(t=>t.id));
+ function ensureNode(t,visiting=new Set()){
+  if(visiting.has(t.id))return null; // unexpected imported cyclic hierarchy
+  if(nodes.has(t.id)){
+   const existing=nodes.get(t.id);
+   if(included.has(t.id))existing.context=false;
+   return existing;
+  }
+  const node={task:t,context:!included.has(t.id),children:[]};
+  nodes.set(t.id,node);
+  const next=new Set(visiting);next.add(t.id);
+  const parent=t.parentId?taskById(t.parentId):null;
+  const sameDue=parent&&parent.goalId===t.goalId&&taskDue(t)&&taskDue(parent)===taskDue(t);
+  const ancestor=sameDue?ensureNode(parent,next):null;
+  if(ancestor)ancestor.children.push(node);else roots.push(node);
+  return node;
+ }
+ items.forEach(t=>ensureNode(t));
+ function draw(node){
+  const t=node.task;
+  const body=node.context?`<div class="home-todo-context"><span class="home-todo-context-icon">↳</span><span>${h(t.title)} <small>（親TODO・${t.status==='done'?'完了':'未完了'}／参照）</small></span></div>`:homeTodoRow(t);
+  return `<li class="home-todo-tree-node ${node.context?'is-context':''}">${body}${node.children.length?`<ul class="home-todo-tree-children">${node.children.map(draw).join('')}</ul>`:''}</li>`;
+ }
+ return `<ul class="home-todo-tree">${roots.map(draw).join('')}</ul>`;
+}
 function homeTodoGroup(items,done){
  const label=done?'完了':'未完了';
- const rows=items.slice(0,6).map(homeTodoRow).join('');
+ const rows=homeTodoTree(items.slice(0,6));
  const rest=items.slice(6);
  const emptyText=done?'まだ完了したTODOはありません。':'今日の未完了TODOはありません。';
- return `<div class="home-todo-group ${done?'home-todo-complete':'home-todo-pending'}"><div class="home-todo-group-heading"><strong>${label}</strong><span>${items.length} 件</span></div>${items.length?rows+(rest.length?`<details class="home-todo-extra"><summary>残り ${rest.length} 件を表示</summary>${rest.map(homeTodoRow).join('')}</details>`:''):`<p class="home-todo-empty">${emptyText}</p>`}</div>`;
+ return `<div class="home-todo-group ${done?'home-todo-complete':'home-todo-pending'}"><div class="home-todo-group-heading"><strong>${label}</strong><span>${items.length} 件</span></div>${items.length?rows+(rest.length?`<details class="home-todo-extra"><summary>残り ${rest.length} 件を表示</summary>${homeTodoTree(rest)}</details>`:''):`<p class="home-todo-empty">${emptyText}</p>`}</div>`;
 }
 function homeMedal(tasks){
  if(!tasks.length)return '';
@@ -245,7 +275,7 @@ function renderTodos(){
 function renderTree(){const g=goalById(ui.activeGoal);if(!g)return '';const p=goalProgress(g.id),roots=children(null,g.id),group=data.groups.find(x=>x.id===g.groupId);
 return `<section><div class="tree-goal-head"><div class="goal-head-row"><strong>${icon('target')} ${h(g.title)}</strong><span class="tag gold">進捗 ${p.pct}%</span></div><p>${h(g.description||'目標達成のための行動を、一歩ずつ分解していきましょう。')}</p><div class="goal-dates">${dueTag(g.dueDate,'目標の完了予定')}${group?dueTag(group.dueDate,'グループの完了予定'):''}${goalFinishedAt(g.id)?`<span class="date-chip finished-chip">実際の完了日 ${h(niceDay(dstr(new Date(goalFinishedAt(g.id))),false))}</span>`:''}</div>${g.doneCriteria?`<p>完了条件：${h(g.doneCriteria)}</p>`:''}<div class="pill-actions mt10"><button class="ghost-btn" data-action="edit-goal" data-id="${h(g.id)}">目標を編集</button><button class="ghost-btn" data-action="duplicate-goal" data-id="${h(g.id)}">${icon('copy','icon-mini')} ツリー複製</button><button class="ghost-btn" data-action="archive-goal" data-id="${h(g.id)}">${g.archivedAt?'保存解除':'研究成果として保存'}</button></div></div>
 <div class="tree-wrap">${roots.length?`<ul class="tree-root">${roots.map(t=>treeNode(t)).join('')}</ul>`:empty('tree','まだ枝がありません','目標の一歩手前にある行動から考えてみましょう。')}
-<button class="tree-add" data-action="new-task" data-goal="${h(g.id)}">${icon('plus','icon-mini')} 子TODOを追加（この目標に直接追加）</button></div><p class="help-copy mt10">✓ を押すと完了にできます。親TODOを完了にすると配下の子TODOも完了します。完了予定日は各TODOをタップして設定できます。</p></section>`
+<button class="tree-add" data-action="new-task" data-goal="${h(g.id)}">${icon('plus','icon-mini')} 子TODOを追加（この目標に直接追加）</button></div><p class="help-copy mt10">✓ を押すと完了にできます。親TODO・子TODOの完了はそれぞれ独立しています。子TODOを完了しても親TODOは自動完了しません。完了予定日は各TODOをタップして設定できます。</p></section>`
 }
 function treeNode(t){const kids=children(t.id,t.goalId),hasKids=kids.length>0,collapsed=ui.collapsed.has(t.id),p=taskPercent(t);return `<li class="tree-item"><div class="tree-node ${hasKids?'parent':''}">
 ${hasKids?`<button class="tree-iconbtn collapse-btn ${collapsed?'is-collapsed':''}" data-action="collapse" data-id="${h(t.id)}" aria-label="枝の開閉">⌄</button>`:`<span style="width:24px;flex-shrink:0"></span>`}
@@ -424,12 +454,13 @@ function renderSettings(){return `${header('設定・データ管理','情報の
 <section class="settings-panel"><h3>${icon('chart')} 保存データの概要</h3><div class="data-summary"><div><b>${data.goals.length}</b><small>目標</small></div><div><b>${data.tasks.length}</b><small>TODO</small></div><div><b>${data.notes.length}</b><small>研究メモ</small></div></div><p class="mt10">通勤記録：${Object.keys(ensureCommuteState().entries).length}日分／装備：${data.commute.equipment.length}件／緊急連絡先：${data.commute.contacts.length}件。</p><p class="mt10">業務記録：${Object.values(data.days).filter(hasDayRecord).length}日分。ブラウザデータを消去すると、この記録も消えることがあります。</p></section>
 <section class="settings-panel"><h3>${icon('copy')} AI用プロンプト</h3><p>日報や週次振り返りを、外部AIに貼り付けるための文章に変換します。生成・コピーだけではAIに送信されません。貼り付ける前に、社名・顧客・担当者・社内の事情・価格・契約条件などを削除してください。</p><button class="outline-btn" data-action="open-prompt" data-type="daily">${icon('copy','icon-mini')} プロンプト生成を開く</button></section>
 <section class="settings-panel"><h3>${icon('shield')} iPhone・オフライン利用</h3>
-<p>アプリの版：<strong>Ver.${APP_VERSION}</strong><br>起動方法：<strong id="pwa-installed-status">確認中</strong><br>オフライン利用：<strong id="pwa-current-status">確認中</strong><br>通信：<strong id="pwa-network-status">確認中</strong></p>
+<p>起動方法：<strong id="pwa-installed-status">確認中</strong><br>オフライン利用：<strong id="pwa-current-status">確認中</strong><br>通信：<strong id="pwa-network-status">確認中</strong></p>
 <div class="notice-bar">${icon('shield','icon-mini')}<span>初回はオンラインで一度開き、オフライン準備完了を確認してください。SafariとiPhoneのホーム画面アプリでは、保存データが別々になる場合があります。バックアップで移行してください。</span></div>
 <p class="mt10" id="pwa-update-text">更新があれば、この欄から確認できます。</p>
 <div class="settings-actions"><button class="outline-btn" data-action="check-app-update">${icon('calendar','icon-mini')} 新しい版を確認</button><button id="pwa-apply-update" class="primary-btn" data-action="apply-app-update" hidden>更新を適用して再起動</button></div>
 </section>
-<section class="settings-panel"><h3>データの初期化</h3><p>このブラウザ内の業務研究室のデータを全件削除します。この操作は取り消せません。必要なデータをバックアップしてから実行してください。</p><button class="danger-btn small-btn" data-action="clear-data">すべての記録を削除</button></section></div>`}
+<section class="settings-panel"><h3>データの初期化</h3><p>このブラウザ内の業務研究室のデータを全件削除します。この操作は取り消せません。必要なデータをバックアップしてから実行してください。</p><button class="danger-btn small-btn" data-action="clear-data">すべての記録を削除</button></section>
+<section class="settings-panel settings-version"><h3>${icon('book')} アプリのバージョン情報</h3><p><strong>業務研究室 Ver.${APP_VERSION}</strong><br><small>更新後は設定画面のこの欄でバージョンを確認できます。</small></p></section></div>`}
 function modalMarkup(title,body,footer=''){return `<div class="modal-layer" data-action="close-outside"><div class="modal" role="dialog" aria-modal="true" aria-label="${h(title)}"><div class="modal-head"><h2>${h(title)}</h2><button class="modal-close" data-action="close-modal" aria-label="閉じる">×</button></div><div class="modal-body">${body}</div>${footer?`<div class="modal-foot">${footer}</div>`:''}</div></div>`}
 function footerButtons(archive='',submit='保存する'){return `${archive}<div class="right"><button class="outline-btn" data-action="close-modal">キャンセル</button><button class="primary-btn" type="submit" form="modal-form">${h(submit)}</button></div>`}
 function inputField(label,name,value='',opts={}){return `<div class="field"><label for="m-${h(name)}">${h(label)}</label>${opts.textarea?`<textarea id="m-${h(name)}" name="${h(name)}" rows="${opts.rows||3}" placeholder="${h(opts.placeholder||'')}">${h(value)}</textarea>`:`<input id="m-${h(name)}" name="${h(name)}" type="${opts.type||'text'}" value="${h(value)}" ${opts.required?'required':''} placeholder="${h(opts.placeholder||'')}" ${opts.max?`maxlength="${opts.max}"`:''}>`}${opts.help?`<small>${h(opts.help)}</small>`:''}</div>`}
@@ -440,7 +471,7 @@ function renderModal(){const m=ui.modal;if(!m){$('#modal-root').innerHTML='';ret
 switch(m.type){
 case 'group': {const g=data.groups.find(x=>x.id===m.id);title=g?'グループを編集':'グループを作成';body=`<form id="modal-form" data-form="group" class="field-group">${inputField('グループ名','name',g?.name||'',{required:true,max:70,placeholder:'例：営業スキルの習得'})}${inputField('グループの完了予定日（任意）','dueDate',g?.dueDate||'',{type:'date',help:'グループ全体の達成を目指す日付です。カレンダーでは◆で表示します。'})}<p class="help-copy">グループは目標を整理するためのフォルダです。目標の中にTODOツリーを作ります。</p></form>`;footer=footerButtons(g?`<button class="danger-btn small-btn" data-action="delete-group" data-id="${h(g.id)}">削除</button>`:'');break}
 case 'goal': {const g=goalById(m.id);title=g?'目標を編集':'目標を作成';const groupOpts=[['','未分類'],...data.groups.map(x=>[x.id,x.name])];body=`<form id="modal-form" data-form="goal" class="field-group">${inputField('達成したい目標','title',g?.title||'',{required:true,max:120,placeholder:'例：新商品の説明を一人でできるようになる'})}${selectField('所属グループ','groupId',groupOpts,g?.groupId||(!g&&ui.activeGroup!=='all'&&ui.activeGroup!=='ungrouped'?ui.activeGroup:''))}${inputField('目標の背景・目的','description',g?.description||'',{textarea:true,placeholder:'なぜ取り組むのか？'})}${inputField('達成したと判断できる条件','doneCriteria',g?.doneCriteria||'',{textarea:true,placeholder:'どの状態になれば達成か？'})}${inputField('目標の完了予定日（任意）','dueDate',g?.dueDate||'',{type:'date',help:'カレンダーでは赤い●で表示します。'})}</form>`;footer=footerButtons(g?`<button class="danger-btn small-btn" data-action="delete-goal" data-id="${h(g.id)}">目標とTODOを削除</button>`:'');break}
-case 'task': {const t=taskById(m.id);const goalId=t?.goalId||m.goalId;const goal=goalById(goalId);title=t?'TODOを編集':'子TODOを追加';if(!goal){hideModal();return}body=`<form id="modal-form" data-form="task" class="field-group"><div class="tip">目標：${h(goal.title)}${m.parentId?`<br>一歩後の行動：${h(taskById(m.parentId)?.title||'')}`:''}</div>${inputField('実行する行動','title',t?.title||'',{required:true,max:160,placeholder:'例：製品資料を10分読む'})}${inputField('目的・手順（任意）','description',t?.description||'',{textarea:true,placeholder:'どのように進める？'})}${inputField('完了条件（任意）','doneCriteria',t?.doneCriteria||'',{textarea:true,placeholder:'例：主要な機能を3つ説明できる'})}${inputField('実行条件（任意）','trigger',t?.trigger||'',{placeholder:'例：製品資料が手元にあるとき'})}${selectField('状態','status',Object.entries(TASK_STATUS),t?.status||'todo')}${inputField('完了予定日（任意）','dueDate',t?.dueDate||'',{type:'date',help:'カレンダーでは子TODOの通過点として表示します。設定した日付が今日になると、ホームのTODOに自動表示されます。期限超過の未完了TODOも表示します。'})}${t?.completedAt?`<div class="tip">実際の完了日：${h(niceDay(dstr(new Date(t.completedAt))))}</div>`:''}</form>`;footer=footerButtons(t?`<button class="danger-btn small-btn" data-action="delete-task" data-id="${h(t.id)}">この枝を削除</button>`:'');break}
+case 'task': {const t=taskById(m.id);const goalId=t?.goalId||m.goalId;const goal=goalById(goalId);title=t?'TODOを編集':'子TODOを追加';if(!goal){hideModal();return}body=`<form id="modal-form" data-form="task" class="field-group"><div class="tip">目標：${h(goal.title)}${m.parentId?`<br>一歩後の行動：${h(taskById(m.parentId)?.title||'')}`:''}</div>${inputField('実行する行動','title',t?.title||'',{required:true,max:160,placeholder:'例：製品資料を10分読む'})}${inputField('目的・手順（任意）','description',t?.description||'',{textarea:true,placeholder:'どのように進める？'})}${inputField('完了条件（任意）','doneCriteria',t?.doneCriteria||'',{textarea:true,placeholder:'例：主要な機能を3つ説明できる'})}${inputField('実行条件（任意）','trigger',t?.trigger||'',{placeholder:'例：製品資料が手元にあるとき'})}${selectField('状態','status',Object.entries(TASK_STATUS),t?.status||'todo')}<small class="help-copy">完了状態はこのTODOだけに適用され、親子のTODOには自動反映されません。</small>${inputField('完了予定日（任意）','dueDate',t?.dueDate||'',{type:'date',help:'カレンダーでは子TODOの通過点として表示します。設定した日付が今日になると、ホームのTODOに自動表示されます。期限超過の未完了TODOも表示します。'})}${t?.completedAt?`<div class="tip">実際の完了日：${h(niceDay(dstr(new Date(t.completedAt))))}</div>`:''}</form>`;footer=footerButtons(t?`<button class="danger-btn small-btn" data-action="delete-task" data-id="${h(t.id)}">この枝を削除</button>`:'');break}
 case 'equipment': {const item=ensureCommuteState().equipment.find(x=>x.id===m.id);title=item?'装備を編集':'出発用の装備を登録';body=`<form id="modal-form" data-form="equipment" class="field-group">${inputField('装備名','title',item?.title||'',{required:true,max:90,placeholder:'例：冬用の革靴、社員証、手袋、傘'})}${selectField('分類','category',EQUIPMENT_CATEGORIES.map(x=>[x,x]),item?.category||'持ち物')}<p class="help-copy">装備名は保存されますが、毎朝のチェック状態は保存しません。</p></form>`;footer=footerButtons(item?`<button class="danger-btn small-btn" data-action="delete-equipment" data-id="${h(item.id)}">削除</button>`:'');break}
 case 'contact': {const c=ensureCommuteState().contacts.find(x=>x.id===m.id);title=c?'緊急連絡先を編集':'緊急連絡先を登録';body=`<form id="modal-form" data-form="contact" class="field-group">${inputField('連絡先の名前・窓口','name',c?.name||'',{required:true,max:100,placeholder:'例：会社の代表電話、緊急連絡窓口'})}${inputField('電話番号','phone',c?.phone||'',{type:'tel',required:true,placeholder:'例：011-000-0000'})}${inputField('補足・連絡時の注意（任意）','description',c?.description||'',{textarea:true,placeholder:'例：交通機関の運休時はここに連絡'})}<div class="notice-bar">${icon('shield','icon-mini')}<span>個人情報や社内の連絡先を登録する前に、保存先が勤務先の規程に適合するか確認してください。</span></div></form>`;footer=footerButtons(c?`<button class="danger-btn small-btn" data-action="delete-contact" data-id="${h(c.id)}">削除</button>`:'');break}
 case 'note': {const n=data.notes.find(x=>x.id===m.id);title=n?'研究メモを編集':'新しい研究メモ';body=`<form id="modal-form" data-form="note" class="field-group"><div class="field-row">${selectField('記録の種類','kind',Object.entries(NOTE_TYPES),n?.kind||m.kind||'insight')}${inputField('日付','date',n?.date||ui.day||today(),{type:'date',required:true})}</div>${inputField('タイトル','title',n?.title||'',{required:true,max:160,placeholder:'例：お客様への説明で気づいたこと'})}${inputField('出来事・状況','details',n?.details||'',{textarea:true,placeholder:'何が起こった？　何を観察した？'})}${inputField('自分の行動・選んだ方法','action',n?.action||'',{textarea:true,placeholder:'どのように対応した？ 他に選択肢はあった？'})}${inputField('理由・原因・仮説','cause',n?.cause||'',{textarea:true,placeholder:'なぜそうなった？ なぜその判断をした？'})}${inputField('結果・分かったこと','result',n?.result||'',{textarea:true,placeholder:'何が分かった？ 結果待ちなら空欄でも構いません。'})}${inputField('次に試すこと・確認すること','nextStep',n?.nextStep||'',{textarea:true,placeholder:'次の行動として何ができる？'})}<div class="field-row">${selectField('調査・進行状況','status',Object.entries(NOTE_STATUS),n?.status||'open')}${inputField('タグ','tags',n?.tags||'',{placeholder:'例：接客、商品知識'})}</div></form>`;footer=footerButtons(n?`<button class="danger-btn small-btn" data-action="delete-note" data-id="${h(n.id)}">削除</button>`:'');break}
@@ -470,7 +501,7 @@ function allTodoReport(start,end){
   `全TODO（親・子含む）：${tasks.length}件／完了 ${completed}件／未完了 ${tasks.length-completed}件／達成率 ${ratio(completed,tasks.length)}（完了÷全件×100、四捨五入）`,
   `参考：末端TODOのみ ${leaves.length}件／完了 ${leafCompleted}件／未完了 ${leaves.length-leafCompleted}件／進捗率 ${ratio(leafCompleted,leaves.length)}`,
   `参考：対象期間中に完了日時が記録されたTODO ${inPeriod.length}件（親TODOの自動完了も含む。期間内に新しく完了した実績を完全に復元したものではありません）`,
-  '注記：親TODOの状態は子TODOの達成状況に応じて自動更新されます。親と子を含めた達成率は階層の重複を含む管理用の指標です。',
+  '注記：親TODO・子TODOはそれぞれ独立して完了状態を記録します。親子を含めた達成率は各TODOの完了件数を集計したものです。',
   '注記：この一覧は現在の最新状態です。対象期間の終了時点での状態を再現したものではなく、期間外・日付未設定のTODOも含まれます。'];
  if(!data.goals.length&&!tasks.length){lines.push('登録された目標・TODOはありません。達成率は算定できません。');return lines.join('\n')}
  const groups=[{id:'',name:'未分類'},...data.groups];
@@ -593,7 +624,7 @@ function saveForm(form){const m=ui.modal,v=Object.fromEntries(new FormData(form)
 if(!m)return;
 if(m.type==='group'){if(!trim('name')){toast('グループ名を入力してください');return}if(id){const g=data.groups.find(x=>x.id===id);if(g){g.name=trim('name');g.dueDate=trim('dueDate')}}else{const g={id:uid(),name:trim('name'),dueDate:trim('dueDate'),createdAt:isoNow()};data.groups.push(g);ui.activeGroup=g.id}}
 if(m.type==='goal'){if(!trim('title')){toast('目標を入力してください');return}let g=id?goalById(id):null;if(!g){g={id:uid(),createdAt:isoNow(),archivedAt:null};data.goals.push(g)}g.title=trim('title');g.groupId=trim('groupId');g.description=trim('description');g.doneCriteria=trim('doneCriteria');g.dueDate=trim('dueDate');ui.activeGoal=g.id;ui.activeGroup='all';ui.todoView='tree'}
-if(m.type==='task'){if(!trim('title')){toast('TODO名を入力してください');return}let t=id?taskById(id):null;const goalId=t?.goalId||m.goalId;if(!goalById(goalId)){toast('目標が見つかりません');return}if(!t){t={id:uid(),goalId,parentId:m.parentId||null,createdAt:isoNow(),completedAt:null,availability:'ready',plannedDate:''};data.tasks.push(t)}const oldStatus=t.status;t.title=trim('title');t.description=trim('description');t.doneCriteria=trim('doneCriteria');t.trigger=trim('trigger');/* Keep legacy availability and plannedDate for compatibility and 今日に追加. */t.dueDate=trim('dueDate');t.status=trim('status')||'todo';if(t.status==='done'){if(oldStatus!=='done')descendantIds(t.id).forEach(tid=>{const node=taskById(tid);node.status='done';node.completedAt=isoNow()});else t.completedAt=t.completedAt||isoNow()}else if(oldStatus==='done'&&t.status!=='done'){descendantIds(t.id).forEach(tid=>{const node=taskById(tid);node.status='todo';node.completedAt=null})}syncParentStatuses(goalId);ui.activeGoal=goalId}
+if(m.type==='task'){if(!trim('title')){toast('TODO名を入力してください');return}let t=id?taskById(id):null;const goalId=t?.goalId||m.goalId;if(!goalById(goalId)){toast('目標が見つかりません');return}if(!t){t={id:uid(),goalId,parentId:m.parentId||null,createdAt:isoNow(),completedAt:null,availability:'ready',plannedDate:''};data.tasks.push(t)}t.title=trim('title');t.description=trim('description');t.doneCriteria=trim('doneCriteria');t.trigger=trim('trigger');/* Keep legacy availability and plannedDate for compatibility and 今日に追加. */t.dueDate=trim('dueDate');t.status=trim('status')||'todo';if(t.status==='done')t.completedAt=t.completedAt||isoNow();else t.completedAt=null;ui.activeGoal=goalId}
 if(m.type==='equipment'){if(!trim('title')){toast('装備名を入力してください');return}const list=ensureCommuteState().equipment;let x=id?list.find(x=>x.id===id):null;if(!x){x={id:uid(),createdAt:isoNow()};list.push(x)}x.title=trim('title');x.category=EQUIPMENT_CATEGORIES.includes(trim('category'))?trim('category'):'持ち物';ui.commuteChecked.delete(x.id)}
 if(m.type==='contact'){if(!trim('name')||!trim('phone')){toast('名前と電話番号を入力してください');return}const phone=trim('phone');if(!/^[+0-9０-９()（）\-ー－\s]{5,30}$/.test(phone)||phone.replace(/\D/g,'').length<5){toast('電話番号を確認してください');return}const list=ensureCommuteState().contacts;let c=id?list.find(x=>x.id===id):null;if(!c){c={id:uid(),createdAt:isoNow()};list.push(c)}c.name=trim('name');c.phone=phone;c.description=trim('description')}
 if(m.type==='note'){if(!trim('title')){toast('タイトルを入力してください');return}let n=id?data.notes.find(x=>x.id===id):null;if(!n){n={id:uid(),createdAt:isoNow()};data.notes.push(n)}for(const k of ['kind','date','title','details','action','cause','result','nextStep','status','tags'])n[k]=trim(k);n.updatedAt=isoNow()}
@@ -691,7 +722,7 @@ document.addEventListener('click',async e=>{
  if(action==='restore'){showModal('restore');return}
  if(action==='delete-group'){if(confirm('グループを削除しますか？所属する目標は「未分類」に移動します。')){data.groups=data.groups.filter(g=>g.id!==id);data.goals.forEach(g=>{if(g.groupId===id)g.groupId=''});ui.activeGroup='all';hideModal();persist();render();toast('グループを削除しました')}return}
  if(action==='delete-goal'){if(confirm('この目標と配下のすべてのTODOを削除しますか？この操作は取り消せません。')){data.goals=data.goals.filter(g=>g.id!==id);data.tasks=data.tasks.filter(t=>t.goalId!==id);ui.activeGoal=null;hideModal();persist();render();toast('目標を削除しました')}return}
- if(action==='delete-task'){if(confirm('このTODOと配下のすべての子TODOを削除しますか？')){const ids=new Set(descendantIds(id));const t=taskById(id);data.tasks=data.tasks.filter(x=>!ids.has(x.id));syncParentStatuses(t.goalId);hideModal();persist();render();toast('TODOを削除しました')}return}
+ if(action==='delete-task'){if(confirm('このTODOと配下のすべての子TODOを削除しますか？')){const ids=new Set(descendantIds(id));data.tasks=data.tasks.filter(x=>!ids.has(x.id));hideModal();persist();render();toast('TODOを削除しました')}return}
  if(action==='delete-equipment'){if(confirm('この装備を削除しますか？')){data.commute.equipment=data.commute.equipment.filter(x=>x.id!==id);ui.commuteChecked.delete(id);hideModal();persist();render();toast('装備を削除しました')}return}
  if(action==='delete-contact'){if(confirm('この連絡先を削除しますか？')){data.commute.contacts=data.commute.contacts.filter(x=>x.id!==id);hideModal();persist();render();toast('連絡先を削除しました')}return}
  if(action==='delete-note'){if(confirm('この研究メモを削除しますか？')){data.notes=data.notes.filter(n=>n.id!==id);hideModal();persist();render();toast('研究メモを削除しました')}return}
